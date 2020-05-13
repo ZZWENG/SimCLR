@@ -1,15 +1,16 @@
-import cv2, torch
+#import cv2
+import torch
 import numpy as np
 from functools import partial
 
+import torch.nn.functional as F
 from detectron2.data.build import build_detection_test_loader, build_detection_train_loader
 from detectron2.structures.masks import BitMasks
 from detectron2.data.dataset_mapper import DatasetMapper
 import os
-if 'DETECTRON2_DATASETS' not in os.environ:
-    print('Setting DETECTRON2_DATASETS...')
-    os.environ['DETECTRON2_DATASETS'] = r'D:\data'
-
+#f 'DETECTRON2_DATASETS' not in os.environ:
+#   print('Need to set DETECTRON2_DATASETS...')
+    #os.environ['DETECTRON2_DATASETS'] = r'/scratch/users/zzweng/datasets'
 
 # a callable which takes a sample (dict) from dataset and
 # returns the format to be consumed by the model
@@ -18,14 +19,18 @@ def wrapper(d, default_m, h, w):
     """
     d has keys: file_name, height, width, image, instances, etc.
     """
+    #mport pdb
+    #db.set_trace()
     img = d['image'].cpu().numpy().transpose(1, 2, 0)
-    img = cv2.resize(img, (h, w))  # .transpose(2, 0, 1)
-    # img = torch.stack([torch.tensor(img)])
+    #img = cv2.resize(img, (h, w))  # .transpose(2, 0, 1)
+    img = F.upsample(img, size=(h, w), mode='bilinear')
+
     raw_h, raw_w = d['instances'].image_size
     masks = BitMasks.from_polygon_masks(d['instances'].gt_masks, raw_h, raw_w).tensor.type(torch.uint8)
     masks_resized = np.zeros((masks.shape[0], h, w))
     for i in range(masks.shape[0]):
-        masks_resized[i] = cv2.resize(masks[i].cpu().numpy(), (w, h))
+        masks_resized[i] = F.upsample(masks[i], size=(h,w), mode='bilinear')
+        #masks_resized[i] = cv2.resize(masks[i].cpu().numpy(), (w, h))
     gt_masks = torch.tensor(masks_resized).type(torch.bool)
 
     """

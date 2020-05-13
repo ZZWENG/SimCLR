@@ -89,6 +89,8 @@ class SimCLR(object):
         return loss
 
     def train(self):
+        import pdb
+        pdb.set_trace()
         train_loader, valid_loader = self.dataset.get_data_loaders()
 
         model = ResNetSimCLR(**self.config["model"]).to(self.device)
