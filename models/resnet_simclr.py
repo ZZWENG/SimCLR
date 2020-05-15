@@ -28,7 +28,13 @@ class ResNetSimCLR(nn.Module):
             raise ("Invalid model name. Check the config file and pass one of: resnet18 or resnet50")
 
     def forward(self, x):
-        h = self.features(x)
+        #import pdb
+        #pdb.set_trace()
+        try:
+            h = self.features(x)
+        except:
+            print(x.shape)
+            h = self.features(x)
         h = h.squeeze()
 
         x = self.l1(h)

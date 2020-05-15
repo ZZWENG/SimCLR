@@ -2,7 +2,7 @@ import numpy as np
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import SubsetRandomSampler
 import torchvision.transforms as transforms
-from data_aug.gaussian_blur import GaussianBlur
+#from data_aug.gaussian_blur import GaussianBlur
 from torchvision import datasets
 
 np.random.seed(0)
@@ -33,7 +33,7 @@ class DataSetWrapper(object):
                                               transforms.RandomHorizontalFlip(),
                                               transforms.RandomApply([color_jitter], p=0.8),
                                               transforms.RandomGrayscale(p=0.2),
-                                              GaussianBlur(kernel_size=int(0.1 * self.input_shape[0])),
+  #                                           GaussianBlur(kernel_size=int(0.1 * self.input_shape[0])),
                                               transforms.ToTensor()])
         return data_transforms
 

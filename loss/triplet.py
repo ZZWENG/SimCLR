@@ -8,7 +8,8 @@ class TripletLoss(nn.Module):
         self.device = device
 
     def forward(self, a, p, n, margin=0.2):
-        d = nn.PairwiseDistance(p=2)
-        distance = d(a, p) - d(a, n) + margin
+        # = nn.PairwiseDistance(p=2)
+        # TODO: support batch size > 1
+        distance = torch.norm(a-p) - torch.norm(a-n) + margin
         loss = torch.mean(torch.max(distance, torch.zeros_like(distance)))
         return loss

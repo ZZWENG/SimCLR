@@ -2,13 +2,13 @@ batch_size: 1
 epochs: 80
 eval_every_n_epochs: 1
 fine_tune_from: None
-log_every_n_steps: 50
+log_every_n_steps: 5
 weight_decay: 10e-6
 fp16_precision: False
 
 model:
   out_dim: 256
-  base_model: "resnet50"
+  base_model: "resnet18"
 
 dataset:
   s: 1
