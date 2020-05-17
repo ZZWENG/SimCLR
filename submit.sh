@@ -2,7 +2,7 @@
 #SBATCH -p syyeung
 #SBATCH --gres gpu:1
 #SBATCH -o out_main
-#SBATCH --mem 15gb
+#SBATCH --mem 35gb
 #SBATCH --time=2:00:00
 
 

@@ -54,20 +54,41 @@ def prepare_seg_triplets(masks, boxes, image):
         yield full, foreground, background
 
 
+def non_overlapping_idx(anchor, masks, thres): 
+    def overlaps(m1, m2):
+        return (m1 * m2).sum() > thres
+    
+    flags = np.array([overlaps(anchor, m) for m in masks])
+    return np.where(flags == True)[0]
+
+
 def prepare_obj_triplets(masks, boxes, image):
-    n = 10
-    # TODO: dummy code
-    anchors = torch.randint(high=masks.shape[0], size=(n,))
-    neg = torch.randint(high=masks.shape[0], size=(n,))
-    #pos = torch.randint(high=masks.shape[0], size=(n,))
+    n = masks.shape[0]
+    boxes = boxes.tensor.detach().cpu().numpy().astype(np.uint32)
     for i in range(n):
-        i_a, i_n = anchors[i], neg[i]
-        m1,m3 = masks[i_a], masks[i_n]
-        m2 = rotate(m1, angle=45, mode = 'wrap')
-        m1 = m1.view(*m1.shape, 1)
-        m2 = m2.view(*m2.shape, 1)
-        m3 = m3.view(*m3.shape, 1)
-        yield m1 * image, m1 * image, m3 * image
+        m1, b = masks[i], boxes[i]
+        neg_idx = non_overlapping_idx(m1, masks, 50)
+        if len(neg_idx) == 0:
+            continue
+        i_n = np.random.choice(neg_idx, 1)[0]
+        m3, b_n = masks[i_n], boxes[i_n]
+        #import ipdb as pdb
+        #pdb.set_trace()
+        m2 = torch.tensor(rotate(m1.cpu().numpy(), angle=45, mode = 'wrap')).type(torch.float).to(m1.device)
+
+        m1 = (m1.view(*m1.shape, 1) * image)[b[1]:b[3], b[0]:b[2],:]
+        m2 = (m2.view(*m2.shape, 1) * image)[b[1]:b[3], b[0]:b[2],:]
+        m3 = (m3.view(*m3.shape, 1) * image)[b_n[1]:b_n[3], b_n[0]:b_n[2],:]
+
+        side_len = 64
+        m1 = cv2.resize(m1.cpu().numpy(), (side_len,side_len))
+        m2 = cv2.resize(m2.cpu().numpy(), (side_len,side_len))
+        m3 = cv2.resize(m3.cpu().numpy(), (side_len,side_len))
+
+        m1 = torch.tensor(m1).type(torch.float).to('cuda')
+        m2 = torch.tensor(m2).type(torch.float).to('cuda')
+        m3 = torch.tensor(m3).type(torch.float).to('cuda')
+        yield m1, m2, m3
 
 
 class SimCLR(object):
@@ -79,7 +100,7 @@ class SimCLR(object):
         self.dataset = dataset
         # self.nt_xent_criterion = NTXentLoss(self.device, config['batch_size'], **config['loss'])
         self.triplet_criterion = TripletLoss(self.device)
-        self.evaluator = get_evaluator(rpn.cfg)
+        self.evaluator = get_evaluator(rpn.cfg, 'coco')
         self.evaluator.reset()
 
     def _get_device(self):
@@ -89,6 +110,8 @@ class SimCLR(object):
 
     def _step(self, model, x_a, x_p, x_n):
         h, w = x_a.shape[0], x_a.shape[1]
+        #print(h, w)
+
         # get the representations and the projections
         r_a, z_a = model(x_a.permute(2,0,1).view(1, 3,h,w))  # [N,C]
         r_p, z_p = model(x_p.permute(2,0,1).view(1, 3,h,w))  # [N,C]
@@ -144,50 +167,58 @@ class SimCLR(object):
         for epoch_counter in range(self.config['epochs']):
             for _, batch in enumerate(train_loader):
                 batch = batch[0]
-                if 698 not in batch['instances'].gt_classes:
-                    continue 
+                #if 698 not in batch['instances'].gt_classes:
+                #    continue 
+                #import ipdb as pdb
+                
                 image = batch['image'].to(self.device)
                 assert (image.shape[2] == 3)
-                # TODO: verify that the image is in BGR format
-                masks, boxes = self.rpn(image)
+                # the image is in BGR format
+                
+                masks, boxes = self.rpn(image, is_train=True)
 
                 optimizer.zero_grad()
 
                 seg_triplets = prepare_seg_triplets(masks, boxes, image)
-                #obj_triplets = prepare_obj_triplets(masks, boxes, image)
-
+                obj_triplets = prepare_obj_triplets(masks, boxes, image)
+ 
+                loss = 0.
                 mean_loss = 0.
                 trip_count = 0
                 for x_a, x_p, x_n in seg_triplets:
                     x_a = x_a.to(self.device)
                     x_p = x_p.to(self.device)
                     x_n = x_n.to(self.device)
-                    loss = self._step(model, x_a, x_p, x_n)
-                    mean_loss += loss
+                    curr_loss = self._step(model, x_a, x_p, x_n)
+                    loss += curr_loss
+                    mean_loss += curr_loss
                     trip_count += 1
-
-                    if apex_support and self.config['fp16_precision']:
-                        with amp.scale_loss(loss, optimizer) as scaled_loss:
-                            scaled_loss.backward()
-                    else:
-                        loss.backward()
-                    optimizer.step()
+                #loss.backward()
+                #optimizer.step()
+                  
+                #loss = 0.
+                for x_a, x_p, x_n in obj_triplets:
+                    x_a = x_a.to(self.device)
+                    x_p = x_p.to(self.device)
+                    x_n = x_n.to(self.device)
+                    curr_loss = self._step(model, x_a, x_p, x_n)
+                    loss += 2 * curr_loss
+                    mean_loss += 2 * curr_loss
+                    trip_count += 1
+                loss.backward()
+                optimizer.step()
                 if trip_count > 0:
                     mean_loss /= trip_count
                 if n_iter % self.config['log_every_n_steps'] == 0:
                     print(mean_loss)
-                    #import ipdb as pdb
-                    #pdb.set_trace()
-                    eval_res = self.evaluator.process([batch], [self.rpn(image, False)])
-                    #self.evaluator.evaluate()
-                    #sys.exit()
+                    
                     labels = batch['labels'].cpu().numpy()
                     proposed_cls = bin_to_cls_mask(masks.cpu().numpy(), plot=True)
                     ground_cls = bin_to_cls_mask(labels, plot=True)
-                    #import pdb
+                    #import ipdb as pdb
                     #pdb.set_trace()
-                    img = image.cpu().numpy().transpose(2,0,1)#[::-1,:,:]
-                    self.writer.add_image('input_images', img, n_iter)
+                    img = image.type(torch.int32).cpu().numpy().transpose(2,0,1) #[::-1,:,:]
+                    self.writer.add_image('input_images',img, n_iter)
                     self.writer.add_text('filename', batch['file_name'], n_iter)
                     #writer.add_text('ground_truth_classes', ','.join([lvis_id_cat_map[k] for k in gt_cls]), n_iter)
                     self.writer.add_image('proposed_masks', make_grid(torch.tensor(proposed_cls.reshape(1,1,224,224))), n_iter)
@@ -202,6 +233,9 @@ class SimCLR(object):
                     image_labels = torch.tensor(image_labels)
                     self.writer.add_embedding(embs, label_img=image_labels.permute(0,3,1,2), global_step=n_iter)
                     """
+                # do test using the detectron2 script. This is too slow.
+                #do_test(self.evaluator, self.rpn.cfg, self.rpn.predictor.model)
+                torch.save(model.state_dict(), 'model.pth')
                 if (n_iter + 1) % 50 == 0:
                     self.rpn.save('runs')
                 n_iter += 1
@@ -223,16 +257,13 @@ class SimCLR(object):
 
         return model
 
-
-def do_test(cfg, model):
+"""
+def do_test(evaluator, cfg, model):
     from detectron2.data.build import build_detection_test_loader
-    from detectron2.evaluation import LVISEvaluator, inference_on_dataset
+    from detectron2.evaluation import inference_on_dataset
 
-    dataset_name = cfg.DATASETS.TEST[0]
-    output_folder = os.path.join("inference", dataset_name)
-    evaluator = LVISEvaluator(dataset_name, cfg, True, output_folder)
-    
+    dataset_name = cfg.DATASETS.TEST[0] 
     data_loader = build_detection_test_loader(cfg, dataset_name)
     results = inference_on_dataset(model, data_loader, evaluator)
     return results
-
+"""

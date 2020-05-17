@@ -11,15 +11,17 @@ from detectron2.engine import DefaultPredictor
 from detectron2.engine import DefaultTrainer
 
 # "COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"
-#CFG_FILE = "LVIS-InstanceSegmentation/mask_rcnn_R_50_FPN_1x.yaml"
-CFG_FILE = "LVIS-InstanceSegmentation/mask_rcnn_X_101_32x8d_FPN_1x.yaml"
+CFG_FILE = "LVIS-InstanceSegmentation/mask_rcnn_R_50_FPN_1x.yaml"
+#CFG_FILE = "LVIS-InstanceSegmentation/mask_rcnn_X_101_32x8d_FPN_1x.yaml"
+
+#CFG_FILE = "COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"
 
 def get_modelzoo_config():
     cfg = get_cfg()
     cfg.merge_from_file(model_zoo.get_config_file(CFG_FILE))
-    cfg.MODEL.WEIGHTS = r'/home/users/zzweng/unsupervised_segmentation/detectron2/checkpoints/model_final_5e3439.pkl' 
+    #cfg.MODEL.WEIGHTS = r'/home/users/zzweng/unsupervised_segmentation/detectron2/checkpoints/model_final_5e3439.pkl' 
     #cfg.MODEL.ROI_BOX_HEAD.CLS_AGNOSTIC_BBOX_REG = TRUE
-    #cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(CFG_FILE)
+    cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(CFG_FILE)
     return cfg
 
 
@@ -27,8 +29,8 @@ def get_class_agnostic_config():
     cfg = get_cfg()
     cfg.merge_from_file(model_zoo.get_config_file(CFG_FILE))
     cfg.MODEL.ROI_MASK_HEAD.CLS_AGNOSTIC_MASK = True
-    cfg.MODEL.ROI_BOX_HEAD.CLS_AGNOSTIC_BBOX_REG = True
-    cfg.MODEL.ROI_HEADS.NUM_CLASSES = 1
+    #cfg.MODEL.ROI_BOX_HEAD.CLS_AGNOSTIC_BBOX_REG = True
+    #cfg.MODEL.ROI_HEADS.NUM_CLASSES = 1
     #cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(CFG_FILE)
     cfg.MODEL.WEIGHTS = 'output/model_0002999.pth'  # TRAINED THE MASK HEAD ON TOP OF mask_rcnn_R_50_FPN_1x
     return cfg
@@ -39,18 +41,21 @@ class ProposalNetwork(nn.Module):
         super(ProposalNetwork, self).__init__()
         #self.cfg = get_modelzoo_config()
         self.cfg = get_class_agnostic_config()
-        #self.cfg.MODEL.RPN.POST_NMS_TOPK_TEST = topk
-        #self.cfg.MODEL.RPN.NMS_THRESH = nms_thres
+        self.cfg.MODEL.RPN.POST_NMS_TOPK_TEST = 200
+        self.cfg.MODEL.RPN.NMS_THRESH = 0.5
         self.cfg.MODEL.DEVICE = device
         # cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5
-
+        #self.cfg.OUTPUT_DIR = '.output/coco'
         self.predictor = DefaultPredictor(self.cfg)
+        print('Build Predictor using cfg')
+        #print(self.cfg)
 
     def train_predictor(self):
-        self.cfg.SOLVER.CHECKPOINT_PERIOD = 1000
+        self.cfg.SOLVER.CHECKPOINT_PERIOD = 2000
         self.cfg.SOLVER.IMS_PER_BATCH = 2
         self.cfg.SOLVER.BASE_LR /= 10.
         self.predictor = DefaultPredictor(self.cfg)
+        self.cfg.OUTPUT_DIR = './output/coco'
         print(self.cfg.OUTPUT_DIR)
         os.makedirs(self.cfg.OUTPUT_DIR, exist_ok=True)
         trainer = DefaultTrainer(self.cfg)
@@ -84,13 +89,13 @@ class ProposalNetwork(nn.Module):
         ax.imshow(v.get_image())
         self.train()
 
-    def forward(self, x, is_train=True):
+    def forward(self, x, is_train=False):
         """ Takes the raw image, and then outputs the boxes and the class agnostic masks
         :param x: (h, w, 3) tensor
         :return: (topk, h, w), (h, w)
         """
         x = x.cpu().numpy()
-        x = (x * 255).astype(np.uint8)
+        x = x.astype(np.uint8)
         assert(x.shape[2] == 3)
         out = self.predictor(x)  # predictor takes images in the BGR format
         if is_train:
@@ -99,7 +104,7 @@ class ProposalNetwork(nn.Module):
             #background = self._get_background(masks)
             return masks, boxes
         else:
-            return out
+            return [out]
 
     def _get_background(self, masks):
         foreground = masks[0]
