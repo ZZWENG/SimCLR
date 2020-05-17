@@ -12,14 +12,6 @@ from torchvision.utils import make_grid
 from evaluate import get_evaluator
 
 apex_support = False
-try:
-    sys.path.append('./apex')
-    from apex import amp
-
-    apex_support = True
-except:
-    print("Please install apex for mixed precision training from: https://github.com/NVIDIA/apex")
-    apex_support = False
 
 torch.manual_seed(0)
 
@@ -54,12 +46,13 @@ def prepare_seg_triplets(masks, boxes, image):
         yield full, foreground, background
 
 
-def non_overlapping_idx(anchor, masks, thres): 
-    def overlaps(m1, m2):
-        return (m1 * m2).sum() > thres
-    
-    flags = np.array([overlaps(anchor, m) for m in masks])
-    return np.where(flags == True)[0]
+def overlaps(m1, m2, thres):
+    return (m1 * m2).sum() > thres
+
+
+def overlapping_idx(anchor, masks, thres): 
+    flags = np.array([overlaps(anchor, m, thres) for m in masks])
+    return np.where(flags == False)[0], np.where(flags == True)[0]
 
 
 def prepare_obj_triplets(masks, boxes, image):
@@ -67,28 +60,35 @@ def prepare_obj_triplets(masks, boxes, image):
     boxes = boxes.tensor.detach().cpu().numpy().astype(np.uint32)
     for i in range(n):
         m1, b = masks[i], boxes[i]
-        neg_idx = non_overlapping_idx(m1, masks, 50)
+        cut_a = (m1.view(*m1.shape, 1) * image)[b[1]:b[3], b[0]:b[2],:]
+        if cut_a.shape[0] * cut_a.shape[1] < 10:
+            continue
+        neg_idx, pos_idx = overlapping_idx(m1, masks, 50)
         if len(neg_idx) == 0:
             continue
+        if len(pos_idx) == 0:
+            # apply augmentation
+            cut_p = torch.tensor(rotate(cut_a.cpu().numpy(), angle=25, mode = 'wrap')).type(torch.float).to(m1.device)
+        else:
+            i_p = np.random.choice(pos_idx, 1)[0]
+            m2, b2 = masks[i_p], boxes[i_p]
+            cut_p = (m2.view(*m2.shape, 1) * image)[b2[1]:b2[3], b2[0]:b2[2],:]
+        
         i_n = np.random.choice(neg_idx, 1)[0]
         m3, b_n = masks[i_n], boxes[i_n]
-        #import ipdb as pdb
-        #pdb.set_trace()
-        m2 = torch.tensor(rotate(m1.cpu().numpy(), angle=45, mode = 'wrap')).type(torch.float).to(m1.device)
-
-        m1 = (m1.view(*m1.shape, 1) * image)[b[1]:b[3], b[0]:b[2],:]
-        m2 = (m2.view(*m2.shape, 1) * image)[b[1]:b[3], b[0]:b[2],:]
-        m3 = (m3.view(*m3.shape, 1) * image)[b_n[1]:b_n[3], b_n[0]:b_n[2],:]
+        cut_n = (m3.view(*m3.shape, 1) * image)[b_n[1]:b_n[3], b_n[0]:b_n[2],:]
+        if cut_n.shape[0] * cut_n.shape[1] < 10:
+            continue
 
         side_len = 64
-        m1 = cv2.resize(m1.cpu().numpy(), (side_len,side_len))
-        m2 = cv2.resize(m2.cpu().numpy(), (side_len,side_len))
-        m3 = cv2.resize(m3.cpu().numpy(), (side_len,side_len))
+        cut_a = cv2.resize(cut_a.cpu().numpy(), (side_len,side_len))
+        cut_p = cv2.resize(cut_p.cpu().numpy(), (side_len,side_len))
+        cut_n = cv2.resize(cut_n.cpu().numpy(), (side_len,side_len))
 
-        m1 = torch.tensor(m1).type(torch.float).to('cuda')
-        m2 = torch.tensor(m2).type(torch.float).to('cuda')
-        m3 = torch.tensor(m3).type(torch.float).to('cuda')
-        yield m1, m2, m3
+        cut_a = torch.tensor(cut_a).type(torch.float).to('cuda')
+        cut_p = torch.tensor(cut_p).type(torch.float).to('cuda')
+        cut_n = torch.tensor(cut_n).type(torch.float).to('cuda')
+        yield cut_a, cut_p, cut_n
 
 
 class SimCLR(object):
@@ -193,10 +193,6 @@ class SimCLR(object):
                     loss += curr_loss
                     mean_loss += curr_loss
                     trip_count += 1
-                #loss.backward()
-                #optimizer.step()
-                  
-                #loss = 0.
                 for x_a, x_p, x_n in obj_triplets:
                     x_a = x_a.to(self.device)
                     x_p = x_p.to(self.device)
@@ -205,8 +201,13 @@ class SimCLR(object):
                     loss += 2 * curr_loss
                     mean_loss += 2 * curr_loss
                     trip_count += 1
-                loss.backward()
-                optimizer.step()
+                if trip_count > 0:
+                    try:
+                        print(loss)
+                        loss.backward()
+                        optimizer.step()
+                    except:
+                        print(loss, trip_count)
                 if trip_count > 0:
                     mean_loss /= trip_count
                 if n_iter % self.config['log_every_n_steps'] == 0:
@@ -235,11 +236,13 @@ class SimCLR(object):
                     """
                 # do test using the detectron2 script. This is too slow.
                 #do_test(self.evaluator, self.rpn.cfg, self.rpn.predictor.model)
-                torch.save(model.state_dict(), 'model.pth')
+                #torch.save(model.state_dict(), 'model.pth')
                 if (n_iter + 1) % 50 == 0:
                     self.rpn.save('runs')
                 n_iter += 1
-                
+                if (n_iter % 1000) == 0:
+                    print('Saving simclr model..')
+                    torch.save(model.state_dict(), 'model_'+str(n_iter)+'.pth')        
             # warmup for the first 10 epochs
             if epoch_counter >= 10:
                 scheduler.step()
