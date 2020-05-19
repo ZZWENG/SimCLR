@@ -3,11 +3,15 @@ epochs: 80
 eval_every_n_epochs: 1
 fine_tune_from: None
 log_every_n_steps: 100
+log_loss_every_n_steps: 10
+save_checkpoint_every_n_steps: 2000
 weight_decay: 10e-6
 fp16_precision: False
+hyperbolic: False
+contrastive_loss_weight: 5
 
 model:
-  out_dim: 256
+  out_dim: 64
   base_model: "resnet18"
 
 dataset:
@@ -19,3 +23,6 @@ dataset:
 loss:
   temperature: 0.5
   use_cosine_similarity: True
+  type: "nce"
+
+

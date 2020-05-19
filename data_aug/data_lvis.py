@@ -19,16 +19,19 @@ def wrapper(d, default_m, h, w):
     d has keys: file_name, height, width, image, instances, etc.
     """
     img = d['image'].cpu().numpy().transpose(1, 2, 0)
-    img = cv2.resize(img, (h, w))  # .transpose(2, 0, 1)
-    #img = F.interpolate(img, size=(h, w), mode='bilinear')
-
+    img = torch.tensor(img).type(torch.float)
+    if 'instances' not in d:
+        d['image'] = img
+        return d
+    #img = cv2.resize(img, (h, w))  # .transpose(2, 0, 1)
+    h, w = d['instances'].image_size
+   
     raw_h, raw_w = d['instances'].image_size
     masks = BitMasks.from_polygon_masks(d['instances'].gt_masks, raw_h, raw_w).tensor.type(torch.uint8)
     masks_resized = np.zeros((masks.shape[0], h, w))
     for i in range(masks.shape[0]):
-        #masks_resized[i] = F.upsample(masks[i], size=(h,w), mode='bilinear')
-        masks_resized[i] = cv2.resize(masks[i].cpu().numpy(), (w, h))
-    img = torch.tensor(img).type(torch.float)
+        masks_resized[i] = masks[i].cpu().numpy()
+        #masks_resized[i] = cv2.resize(masks[i].cpu().numpy(), (w, h))
     gt_masks = torch.tensor(masks_resized).type(torch.bool)
 
     """
@@ -74,6 +77,6 @@ class DataSetWrapper(object):
 
     def get_data_loaders(self):
         train_loader = get_lvis_train_dataloader(self.cfg, self.h, self.w)
-        valid_loader = None
-        #valid_loader = get_lvis_test_dataloader(self.cfg, self.h, self.w)
+        #valid_loader = None
+        valid_loader = get_lvis_test_dataloader(self.cfg, self.h, self.w)
         return train_loader, valid_loader

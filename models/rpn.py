@@ -1,4 +1,6 @@
+
 #import matplotlib.pyplot as plt
+import torch
 import torch.nn as nn
 import numpy as np
 import os
@@ -32,7 +34,7 @@ def get_class_agnostic_config():
     #cfg.MODEL.ROI_BOX_HEAD.CLS_AGNOSTIC_BBOX_REG = True
     #cfg.MODEL.ROI_HEADS.NUM_CLASSES = 1
     #cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(CFG_FILE)
-    cfg.MODEL.WEIGHTS = 'output/model_0002999.pth'  # TRAINED THE MASK HEAD ON TOP OF mask_rcnn_R_50_FPN_1x
+    cfg.MODEL.WEIGHTS = 'output/rpn_model_8000.pth'  # TRAINED THE MASK HEAD ON TOP OF mask_rcnn_R_50_FPN_1x
     return cfg
 
 
@@ -44,6 +46,8 @@ class ProposalNetwork(nn.Module):
         self.cfg.MODEL.RPN.POST_NMS_TOPK_TEST = 200
         self.cfg.MODEL.RPN.NMS_THRESH = 0.5
         self.cfg.MODEL.DEVICE = device
+        self.cfg.MODEL.RPN.PRE_NMS_TOPK_TEST = 200
+        self.cfg.MODEL.RPN.POST_NMS_TOPK_TEST = 50
         # cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5
         #self.cfg.OUTPUT_DIR = '.output/coco'
         self.predictor = DefaultPredictor(self.cfg)
@@ -62,17 +66,14 @@ class ProposalNetwork(nn.Module):
         trainer.resume_or_load(resume=False)
         trainer.train()
 
-    def save(self, path):
-        try:
-            checkpoints_folder = os.path.join(path, 'checkpoints', 'model.pth')
-            torch.save(self.predictor.model, checkpoints_folder)
-        except:
-            print("Error in saving the checkpoint.")
+    def save(self, path, i):
+        checkpoints_folder = os.path.join(path, 'rpn_model_'+str(i)+'.pth')
+        torch.save(self.predictor.model.state_dict(), checkpoints_folder)
 
-    def load(self, path):
+    def load(self, path, i):
         try:
-            checkpoints_folder = os.path.join(path, 'checkpoints')
-            state_dict = torch.load(os.path.join(checkpoints_folder, 'model.pth'))
+            checkpoints_folder = os.path.join(path)
+            state_dict = torch.load(os.path.join(checkpoints_folder, 'model_'+str(i)+'.pth'))
             self.predictor.model.load_state_dict(state_dict)
             print("Loaded pre-trained model with success.")
         except FileNotFoundError:
