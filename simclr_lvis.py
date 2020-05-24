@@ -12,6 +12,10 @@ from skimage.transform import rotate
 from torchvision.utils import make_grid
 from evaluate import get_evaluator
 import time
+import torchvision.transforms as T
+import skimage
+from torchvision.transforms import Normalize
+normalize = Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
 apex_support = False
 
@@ -67,19 +71,19 @@ def keep(i, masks):
     for j in range(len(masks)):
         if j == i: continue
         area = masks[i].sum().item() * 1.
-        if area < 280:
-            return False
-        if (masks[j] * masks[i]).sum() / area > 0.7 and area < masks[j].sum():
+        if area < 400:
+            return False  # take out small objects
+        if (masks[j] * masks[i]).sum() / area > 0.6 and area < masks[j].sum():
 #             print((masks[j] * masks[i]).sum() / masks[i].sum())
             return False
     return True
 
 
 
-# returns tensor (N, L, L, 3), (N, L, L, 3)
-def prepare_object_pairs(masks, boxes, image, side_len=64):
+# returns tensor (N, L, L, 3), (N, L, L, 3) for input to model
+def prepare_object_pairs(masks, boxes, image, side_len=128):
     n = masks.shape[0]
-    boxes = boxes.tensor.detach().cpu().numpy().astype(np.uint32)
+    boxes = boxes.tensor.detach().cpu().numpy().astype(np.int)
     result = []
     result_aug = []
     for i in range(n):
@@ -89,14 +93,21 @@ def prepare_object_pairs(masks, boxes, image, side_len=64):
             continue
         try:
             cropped = cv2.resize(cropped.cpu().numpy(), (side_len,side_len))
-            cropped_aug = rotate(cropped, angle=25, mode = 'wrap')
+ 
+            cropped_aug = rotate(cropped, angle=45, mode = 'wrap')
+            cropped_aug = skimage.util.random_noise(cropped_aug)
+            cropped_aug = T.RandomErasing(0.9, scale=(0.02, 0.23))(torch.tensor(cropped_aug))
         except:
             continue
         result += [cropped]
         result_aug += [cropped_aug]
-    result = torch.tensor(np.stack(result)).type(torch.float).to(masks.device)
+    result = torch.tensor(np.stack(result)).type(torch.float).to(masks.device)/255.
     result_aug = torch.tensor(np.stack(result_aug)).type(torch.float).to(masks.device)
-    return result.permute(0,3,1,2), result_aug.permute(0,3,1,2)
+    result, result_aug = result.permute(0,3,1,2), result_aug.permute(0,3,1,2)
+
+    result = torch.stack([normalize(result[i]) for i in range(result.shape[0])])
+    result_aug = torch.stack([normalize(result_aug[i]) for i in range(result_aug.shape[0])])
+    return result, result_aug
 
 
 def prepare_obj_triplets(masks, boxes, image):
@@ -124,7 +135,7 @@ def prepare_obj_triplets(masks, boxes, image):
         if size_of(cut_p) < 10 or size_of(cut_n) < 10 or size_of(cut_a) < 10:
             continue
         
-        side_len = 64
+        side_len = 128
         cut_a = cv2.resize(cut_a.cpu().numpy(), (side_len,side_len))
         cut_p = cv2.resize(cut_p.cpu().numpy(), (side_len,side_len))
         cut_n = cv2.resize(cut_n.cpu().numpy(), (side_len,side_len))
@@ -153,9 +164,10 @@ class SimCLR(object):
            self.triplet_loss_crit = HTripletLoss()
         else:
            self.triplet_loss_crit = TripletLoss()
-        checkpoint_dir = 'runs/checkpoints/hyp={}_zdim={}_loss={}'.format(
-             self.config['hyperbolic'], self.config['model']['out_dim'], self.config['loss']['type']
+        checkpoint_dir = '/scratch/users/zzweng/runs/checkpoints/{}_hyp={}_zdim={}_loss={}'.format(
+             self.config['desc'], self.config['hyperbolic'], self.config['model']['out_dim'], self.config['loss']['type']
         )
+        
         os.makedirs(checkpoint_dir, exist_ok=True)
         self.checkpoint_dir = checkpoint_dir
         self.evaluator = get_evaluator(rpn.cfg, 'coco')
@@ -185,6 +197,7 @@ class SimCLR(object):
 
         # xis = [N, H, W, 3]
     def _step_nce(self, model, xis, xjs, n_iter):
+        #assert (xis.max() <= 1.)
         # get the representations and the projections
         ris, zis = model(xis)  # [N,C]
 
@@ -197,8 +210,6 @@ class SimCLR(object):
             zjs = F.normalize(zjs, dim=1)
         except:
             print(zis.shape, zjs.shape)
-            import ipdb as pdb
-            pdb.set_trace()
         loss = self.loss_crit(zis, zjs)
         return loss
 
@@ -250,17 +261,20 @@ class SimCLR(object):
                 masks, boxes = self.rpn(image, is_train=True)
                 idx = [i for i in range(masks.shape[0]) if keep(i, masks)]
                 masks, boxes = masks[idx], boxes[idx]
-                seg_triplets = prepare_seg_triplets(masks, boxes, image)
-                obj_triplets = prepare_obj_triplets(masks, boxes, image)
+                #seg_triplets = prepare_seg_triplets(masks, boxes, image)
+                #obj_triplets = prepare_obj_triplets(masks, boxes, image)
  
                 loss = 0.
                 mean_loss = 0.
                 loss_count = 0
+                """
+                seg_triplets = prepare_seg_triplets(masks, boxes, image)
                 for x_a, x_p, x_n in seg_triplets:
                     curr_loss = self._step(model, x_a, x_p, x_n)
                     loss += curr_loss
                     mean_loss += curr_loss
                     loss_count += 1
+                """
                 if self.config['loss']['type'] == 'triplet':
                     obj_triplets = prepare_obj_triplets(masks, boxes, image)
                     for x_a, x_p, x_n in obj_triplets:
