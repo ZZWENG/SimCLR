@@ -32,12 +32,13 @@ class HResNetSimCLR(nn.Module):
         num_ftrs = resnet.fc.in_features
 
         self.encoder = nn.Sequential(*list(resnet.children())[:-1])
-
+        for p in self.encoder.parameters():
+            p.requires_grad = False
         self.embedding = nn.Sequential(
             nn.Linear(num_ftrs, 256),
             nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.ReLU(),
+            #nn.Linear(256, 256),
+            #nn.ReLU(),
             ToPoincare(in_dim=256, ball=ball)
         )
 

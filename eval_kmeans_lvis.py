@@ -164,11 +164,12 @@ class Eval_KMeans(object):
             if len(idx) == 0: continue
             predicted = neigh.predict(feats[idx])
         #     neighbors = neigh.kneighbors(feats[np.where(clusters==i)])[1]
-        #     distances = neigh.kneighbors(feats[np.where(clusters==i)])[0]
+#             distances = neigh.kneighbors(feats[np.where(clusters==i)])[0]
+            
             votes = sorted(Counter(predicted).items(), key=lambda tup:-tup[1])
             best_ratio = votes[0][1] / len(predicted)
-            if len(predicted) < 3: continue # ignore clusters with fewer than 5
-            if best_ratio < 0.65: continue
+#             if len(predicted) < 3: continue # ignore clusters with fewer than 5
+            if best_ratio < 0.95: continue
             cluster_to_coco[i] = (votes[0][0], best_ratio, len(predicted))
                 
 #             if votes[0][0] not in coco_clusters or coco_clusters[votes[0][0]][1] < best_ratio:

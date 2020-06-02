@@ -250,7 +250,7 @@ class SimCLR(object):
             p.requires_grad = False 
         #segmentation_params = self.rpn.predictor.model.roi_heads.parameters()
         #optimizer = torch.optim.Adam(list(segmentation_params)+list(model.parameters()), 3e-4, weight_decay=eval(self.config['weight_decay']))
-        optimizer = geoopt.optim.RiemannianAdam(model.parameters(), 1e-4, weight_decay=eval(self.config['weight_decay']))
+        optimizer = geoopt.optim.RiemannianAdam([p for p in model.parameters() if p.requires_grad], 1e-4, weight_decay=eval(self.config['weight_decay']))
         #optimizer = torch.optim.Adam(model.parameters(), 1e-4, weight_decay=eval(self.config['weight_decay']))
         
         num_train = len(train_loader.dataset.dataset)

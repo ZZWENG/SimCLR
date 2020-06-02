@@ -2,13 +2,14 @@ batch_size: 1
 epochs: 80
 eval_every_n_epochs: 1
 fine_tune_from: None
-log_every_n_steps: 100
+log_every_n_steps: 500
 log_loss_every_n_steps: 10
-save_checkpoint_every_n_steps: 2000
+save_checkpoint_every_n_steps: 10000
 weight_decay: 10e-6
 fp16_precision: False
-hyperbolic: False
+hyperbolic: True
 contrastive_loss_weight: 5
+desc: "freeze_coco_pretrain"
 
 model:
   out_dim: 64
@@ -23,6 +24,6 @@ dataset:
 loss:
   temperature: 0.5
   use_cosine_similarity: True
-  type: "nce"
+  type: "triplet"
 
 
