@@ -1,9 +1,9 @@
 #!/bin/bash
-#SBATCH -p syyeung
+#SBATCH -p gpu
 #SBATCH --gres gpu:1
-#SBATCH -o out_main
+#SBATCH -o out_train
 #SBATCH --mem 25gb
-#SBATCH --time=5:00:00
+#SBATCH --time=24:00:00
 
 
 #ml load cudnn/7.4.1.5
@@ -17,9 +17,5 @@ module load cairo/1.14.10
  
 export DETECTRON2_DATASETS=/scratch/users/zzweng/datasets
 #export PYTHONPATH=/home/users/zzweng/unsupervised_segmentation/detectron2/:$PYTHONPATH
-#python save_patch_lvis.py
-python extract_dt_features_lvis.py
 
-#python models/rpn.py
-#python save_patch.py
-#python run_lvis.py
+python run_lvis.py
