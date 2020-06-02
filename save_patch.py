@@ -13,7 +13,7 @@ cocoGt=COCO('/scratch/users/zzweng/datasets/coco/annotations/instances_val2017.j
 
 feature_y = []
 patch_data = []
-for img_id in tqdm(cocoGt.getImgIds()[:500]):
+for img_id in tqdm(cocoGt.getImgIds()):
     for ann_id in cocoGt.getAnnIds(imgIds=[img_id]):
         ann = cocoGt.loadAnns(ann_id)[0]
         b = np.array(ann['bbox']).astype(np.int)
@@ -34,6 +34,6 @@ patch_data = np.stack(patch_data)
 feature_y_arr = np.array(feature_y)
 print(patch_data.shape, feature_y_arr.shape)
 
-np.save('patch_x_224_ml_mask.npy', patch_data)
-np.save('patch_y_224_ml_mask.npy', feature_y_arr)
+np.save('/scratch/users/zzweng/patch_x_224_ml_mask_all.npy', patch_data)
+np.save('/scratch/users/zzweng/patch_y_224_ml_mask_all.npy', feature_y_arr)
 

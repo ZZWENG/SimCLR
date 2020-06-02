@@ -15,6 +15,7 @@ import time
 import torchvision.transforms as T
 import skimage
 from torchvision.transforms import Normalize
+import geoopt
 normalize = Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
 apex_support = False
@@ -31,10 +32,10 @@ def _save_config_file(model_checkpoints_folder):
 def bin_to_cls_mask(labels, plot=True):
     h, w = labels.shape[1:]
     mask = np.zeros((h, w))
-    for i in range(labels.shape[0]):
+    for i in reversed(range(labels.shape[0])):
         mask[labels[i]] = i+1
     if plot:
-        mask = mask /(i+2)*255  # convert to greyscale
+        mask = mask /(labels.shape[0]+1)*255  # convert to greyscale
     return mask.astype(np.uint8)
 
 
@@ -43,8 +44,7 @@ def prepare_seg_triplets(masks, boxes, image):
     boxes = boxes.tensor.detach().cpu().numpy().astype(np.uint32)
     for i in range(n):
         m, b = masks[i], boxes[i]
-        if m.sum() < 1024:
-            continue  # skip tiny masks for now
+        if m.sum() < 400:  continue  # skip tiny masks for now
         m = m.view(*m.shape, 1)
         full = image[b[1]:b[3], b[0]:b[2],:]
         foreground = (m * image)[b[1]:b[3], b[0]:b[2],:]
@@ -65,6 +65,7 @@ def size_of(cut):
     return cut.shape[0] * cut.shape[1]
 
 # post processing
+"""
 def keep(i, masks):
     # retuns true if masks[i] overlaps with some other masks by more than x% of itself
     masks_out = []
@@ -77,7 +78,17 @@ def keep(i, masks):
 #             print((masks[j] * masks[i]).sum() / masks[i].sum())
             return False
     return True
-
+"""
+def keep(i, masks):
+    # retuns true if masks[i] overlaps with some other masks by more than x% of itself
+    masks_out = []
+    for j in range(i):
+        if j == i: continue
+        area = masks[i].sum().item() * 1.
+#         if area < 400: return False
+        if (masks[j] * masks[i]).sum() / area > 0.7: # and area < masks[j].sum():
+            return False
+    return True
 
 
 # returns tensor (N, L, L, 3), (N, L, L, 3) for input to model
@@ -233,10 +244,14 @@ class SimCLR(object):
         else:
             model = ResNetSimCLR(**self.config["model"]).to(self.device)
         model = self._load_pre_trained_weights(model)
-         
-        segmentation_params = self.rpn.predictor.model.roi_heads.parameters()
-        optimizer = torch.optim.Adam(list(segmentation_params)+list(model.parameters()), 3e-4, weight_decay=eval(self.config['weight_decay']))
-        #optimizer = torch.optim.Adam(model.parameters(), 3e-4, weight_decay=eval(self.config['weight_decay']))
+        
+        print('Freezing rpn weights')
+        for p in self.rpn.predictor.model.parameters():
+            p.requires_grad = False 
+        #segmentation_params = self.rpn.predictor.model.roi_heads.parameters()
+        #optimizer = torch.optim.Adam(list(segmentation_params)+list(model.parameters()), 3e-4, weight_decay=eval(self.config['weight_decay']))
+        optimizer = geoopt.optim.RiemannianAdam(model.parameters(), 1e-4, weight_decay=eval(self.config['weight_decay']))
+        #optimizer = torch.optim.Adam(model.parameters(), 1e-4, weight_decay=eval(self.config['weight_decay']))
         
         num_train = len(train_loader.dataset.dataset)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_train, eta_min=0,
@@ -252,7 +267,6 @@ class SimCLR(object):
                 batch = batch[0]
                 #if 698 not in batch['instances'].gt_classes:
                 #    continue 
-                #import ipdb as pdb
                 
                 image = batch['image'].to(self.device)
                 assert (image.shape[2] == 3)
@@ -267,7 +281,7 @@ class SimCLR(object):
                 loss = 0.
                 mean_loss = 0.
                 loss_count = 0
-                """
+                """                
                 seg_triplets = prepare_seg_triplets(masks, boxes, image)
                 for x_a, x_p, x_n in seg_triplets:
                     curr_loss = self._step(model, x_a, x_p, x_n)
@@ -334,8 +348,7 @@ class SimCLR(object):
 
     def _load_pre_trained_weights(self, model):
         try:
-            checkpoints_folder = os.path.join('./runs', self.config['fine_tune_from'], 'checkpoints')
-            state_dict = torch.load(os.path.join(checkpoints_folder, 'model.pth'))
+            state_dict = torch.load(os.path.join(self.checkpoint_dir, 'model_60000.pth'))
             model.load_state_dict(state_dict)
             print("Loaded pre-trained model with success.")
         except FileNotFoundError:

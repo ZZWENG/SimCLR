@@ -133,6 +133,8 @@ def main(args):
         rpn = ProposalNetwork('cuda')
         cfg = rpn.cfg
         model = rpn.predictor.model
+        cfg.DATASETS.TRAIN = ('lvis_v0.5_train',)
+        cfg.DATASETS.TEST = ('lvis_v0.5_val',)
         DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
             cfg.MODEL.WEIGHTS, resume=args.resume
         )

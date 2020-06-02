@@ -1,9 +1,22 @@
 import torch.nn as nn
 import torch
-from hyptorch.nn import HyperbolicDistanceLayer
+#rom hyptorch.nn import HyperbolicDistanceLayer
 import numpy as np
+import geoopt
 
+class HTripletLoss(nn.Module):
+    def __init__(self):
+        super(HTripletLoss, self).__init__()
+        self.ball = geoopt.PoincareBall(c=1.0)
 
+    def forward(self, a, p, n, margin=1.0):
+        d_a_p = self.ball.dist(a, p)
+        d_a_n = self.ball.dist(a, n)
+        distance = d_a_p - d_a_n +margin
+        loss = torch.mean(torch.max(distance, torch.zeros_like(distance)))
+        return loss
+
+"""
 class HTripletLoss(nn.Module):
     def __init__(self):
         super(HTripletLoss, self).__init__()
@@ -15,7 +28,7 @@ class HTripletLoss(nn.Module):
         distance = d_a_p - d_a_n +margin
         loss = torch.mean(torch.max(distance, torch.zeros_like(distance)))
         return loss
-
+"""
 
 class TripletLoss(nn.Module):
     def __init__(self):
