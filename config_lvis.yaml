@@ -8,7 +8,9 @@ save_checkpoint_every_n_steps: 10000
 weight_decay: 10e-6
 fp16_precision: False
 hyperbolic: True
-contrastive_loss_weight: 5
+beta: 5
+augmentation: True
+mask_nms: True
 desc: "freeze_coco_pretrain"
 
 model:
@@ -24,6 +26,8 @@ dataset:
 loss:
   temperature: 0.5
   use_cosine_similarity: True
+  mask_loss: False
+  object_loss: True
   type: "triplet"
 
 

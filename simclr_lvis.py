@@ -1,21 +1,25 @@
-import torch, torchvision
-from models.resnet_simclr import ResNetSimCLR
-from models.hyperbolic_resnet import HResNetSimCLR
-from torch.utils.tensorboard import SummaryWriter
+import cv2
+import json
+import os
+import shutil
+
+import geoopt
+import numpy as np
+import skimage
+import torch
 import torch.nn.functional as F
+import torchvision.transforms as T
+from skimage.transform import rotate
+from torch.utils.tensorboard import SummaryWriter
+from torchvision.transforms import Normalize
+from torchvision.utils import make_grid
+
+from evaluate import get_evaluator
 from loss.nt_xent import NTXentLoss
 from loss.triplet import TripletLoss, HTripletLoss
-import os, sys, cv2
-import shutil
-import numpy as np
-from skimage.transform import rotate
-from torchvision.utils import make_grid
-from evaluate import get_evaluator
-import time
-import torchvision.transforms as T
-import skimage
-from torchvision.transforms import Normalize
-import geoopt
+from models.hyperbolic_resnet import HResNetSimCLR
+from models.resnet_simclr import ResNetSimCLR
+
 normalize = Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
 apex_support = False
@@ -35,7 +39,7 @@ def bin_to_cls_mask(labels, plot=True):
     for i in reversed(range(labels.shape[0])):
         mask[labels[i]] = i+1
     if plot:
-        mask = mask /(labels.shape[0]+1)*255  # convert to greyscale
+        mask = mask / (labels.shape[0]+1)*255  # convert to greyscale
     return mask.astype(np.uint8)
 
 
@@ -52,11 +56,9 @@ def prepare_seg_triplets(masks, boxes, image):
         yield full, foreground, background
 
 
-def overlaps(m1, m2, thres):
-    return (m1 * m2).sum() > thres
-
-
-def overlapping_idx(anchor, masks, thres): 
+def overlapping_idx(anchor, masks, thres):
+    def overlaps(m1, m2, thres):
+        return (m1 * m2).sum() > thres
     flags = np.array([overlaps(anchor, m, thres) for m in masks])
     return np.where(flags == False)[0], np.where(flags == True)[0]
 
@@ -64,24 +66,10 @@ def overlapping_idx(anchor, masks, thres):
 def size_of(cut):
     return cut.shape[0] * cut.shape[1]
 
+
 # post processing
-"""
 def keep(i, masks):
     # retuns true if masks[i] overlaps with some other masks by more than x% of itself
-    masks_out = []
-    for j in range(len(masks)):
-        if j == i: continue
-        area = masks[i].sum().item() * 1.
-        if area < 400:
-            return False  # take out small objects
-        if (masks[j] * masks[i]).sum() / area > 0.6 and area < masks[j].sum():
-#             print((masks[j] * masks[i]).sum() / masks[i].sum())
-            return False
-    return True
-"""
-def keep(i, masks):
-    # retuns true if masks[i] overlaps with some other masks by more than x% of itself
-    masks_out = []
     for j in range(i):
         if j == i: continue
         area = masks[i].sum().item() * 1.
@@ -121,45 +109,48 @@ def prepare_object_pairs(masks, boxes, image, side_len=128):
     return result, result_aug
 
 
-def prepare_obj_triplets(masks, boxes, image):
+def apply_mask(image, m, b):
+    return (m.view(*m.shape, 1) * image)[b[1]:b[3], b[0]:b[2], :]
+
+
+def prepare_obj_triplets(masks, boxes, image, augment=False, side_len=128):
     n = masks.shape[0]
+    k = 5  # number of triplets sampled for each anchor
     boxes = boxes.tensor.detach().cpu().numpy().astype(np.uint32)
     for i in range(n):
         m1, b = masks[i], boxes[i]
-        cut_a = (m1.view(*m1.shape, 1) * image)[b[1]:b[3], b[0]:b[2],:]
+        cut_a = (m1.view(*m1.shape, 1) * image)[b[1]:b[3], b[0]:b[2], :]
         if cut_a.shape[0] * cut_a.shape[1] < 10:
             continue
-        neg_idx, pos_idx = overlapping_idx(m1, masks, 50)
-        if len(neg_idx) == 0:
-            continue
-        if len(pos_idx) == 0:
-            # apply augmentation
-            cut_p = torch.tensor(rotate(cut_a.cpu().numpy(), angle=25, mode = 'wrap')).type(torch.float).to(m1.device)
-        else:
-            i_p = np.random.choice(pos_idx, 1)[0]
-            m2, b2 = masks[i_p], boxes[i_p]
-            cut_p = (m2.view(*m2.shape, 1) * image)[b2[1]:b2[3], b2[0]:b2[2],:]
-        
-        i_n = np.random.choice(neg_idx, 1)[0]
-        m3, b_n = masks[i_n], boxes[i_n]
-        cut_n = (m3.view(*m3.shape, 1) * image)[b_n[1]:b_n[3], b_n[0]:b_n[2],:]
-        if size_of(cut_p) < 10 or size_of(cut_n) < 10 or size_of(cut_a) < 10:
-            continue
-        
-        side_len = 128
-        cut_a = cv2.resize(cut_a.cpu().numpy(), (side_len,side_len))
-        cut_p = cv2.resize(cut_p.cpu().numpy(), (side_len,side_len))
-        cut_n = cv2.resize(cut_n.cpu().numpy(), (side_len,side_len))
 
-        cut_a = torch.tensor(cut_a).type(torch.float).to('cuda')
-        cut_p = torch.tensor(cut_p).type(torch.float).to('cuda')
-        cut_n = torch.tensor(cut_n).type(torch.float).to('cuda')
-        """
-        # simclr model takes float type
-        cut_a = cut_a.type(torch.float)
-        cut_n = cut_n.type(torch.float)
-        """
-        yield cut_a, cut_p, cut_n
+        neg_idx, pos_idx = overlapping_idx(m1, masks, 50)
+        if len(neg_idx) == 0:  continue
+
+        if len(pos_idx) == 0:
+            if augment:
+                raise Exception('Need to change this part.')
+                cut_p = torch.tensor(rotate(cut_a.cpu().numpy(), angle=25, mode='wrap')).type(torch.float).to(m1.device)
+            else:
+                continue
+        else:
+            for j in range(k):
+                i_p = np.random.choice(pos_idx, 1)[0]
+                cut_p = apply_mask(image, masks[i_p], boxes[i_p])
+        
+                i_n = np.random.choice(neg_idx, 1)[0]
+                cut_n = apply_mask(image, masks[i_n], boxes[i_n])
+
+                if size_of(cut_p) < 10 or size_of(cut_n) < 10 or size_of(cut_a) < 10:
+                    continue
+
+                cut_a = cv2.resize(cut_a.cpu().numpy(), (side_len, side_len))
+                cut_p = cv2.resize(cut_p.cpu().numpy(), (side_len, side_len))
+                cut_n = cv2.resize(cut_n.cpu().numpy(), (side_len, side_len))
+
+                cut_a = torch.tensor(cut_a).type(torch.float).to('cuda')
+                cut_p = torch.tensor(cut_p).type(torch.float).to('cuda')
+                cut_n = torch.tensor(cut_n).type(torch.float).to('cuda')
+                yield cut_a, cut_p, cut_n
 
 
 class SimCLR(object):
@@ -168,6 +159,7 @@ class SimCLR(object):
         self.rpn = rpn
         self.device = self._get_device()
         self.writer = SummaryWriter()
+        self._write_configs()
         self.dataset = dataset
         if self.config['loss']['type'] == 'nce':
            self.loss_crit = NTXentLoss(self.device, config['batch_size'], **config['loss'])
@@ -184,15 +176,16 @@ class SimCLR(object):
         self.evaluator = get_evaluator(rpn.cfg, 'coco')
         self.evaluator.reset()
 
+    def _write_configs(self):
+        config_str = json.dumps(self.config)
+        self.writer.add_text('configs', config_str, 0)
+
     def _get_device(self):
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         print("Running on:", device)
         return device
 
     def _step(self, model, x_a, x_p, x_n):
-        #h, w = x_a.shape[0], x_a.shape[1]
-        #print(h, w)
-
         # get the representations and the projections
         r_a, z_a = model(x_a.permute(2,0,1).view(1, 3,x_a.shape[0],x_a.shape[1]))  # [N,C]
         r_p, z_p = model(x_p.permute(2,0,1).view(1, 3,x_p.shape[0],x_p.shape[1]))  # [N,C]
@@ -224,19 +217,6 @@ class SimCLR(object):
         loss = self.loss_crit(zis, zjs)
         return loss
 
-    def _get_feature(self, model, x, b):
-        # x is already m * image
-        x = x[b[1]:b[3], b[0]:b[2],:][b[1]:b[3], b[0]:b[2],:]
-        h_, w_ = x.shape[0], x.shape[1]
-        """
-        if h_*w_ < 1024:
-            x = cv2.resize(x.cpu().numpy(), (40,40))
-            x = torch.tensor(x)
-            print('resized to', x.shape)
-        """
-        r, _ = model(x.permute(2,0,1).view(1, 3, h_, w_))
-        return r
-
     def train(self):
         train_loader, valid_loader = self.dataset.get_data_loaders()
         if self.config['hyperbolic']:
@@ -244,14 +224,21 @@ class SimCLR(object):
         else:
             model = ResNetSimCLR(**self.config["model"]).to(self.device)
         model = self._load_pre_trained_weights(model)
-        
         print('Freezing rpn weights')
         for p in self.rpn.predictor.model.parameters():
-            p.requires_grad = False 
+            p.requires_grad = False
+
         #segmentation_params = self.rpn.predictor.model.roi_heads.parameters()
         #optimizer = torch.optim.Adam(list(segmentation_params)+list(model.parameters()), 3e-4, weight_decay=eval(self.config['weight_decay']))
-        optimizer = geoopt.optim.RiemannianAdam([p for p in model.parameters() if p.requires_grad], 1e-4, weight_decay=eval(self.config['weight_decay']))
-        #optimizer = torch.optim.Adam(model.parameters(), 1e-4, weight_decay=eval(self.config['weight_decay']))
+
+        if self.config['hyperbolic']:
+            optimizer = geoopt.optim.RiemannianAdam(
+                [p for p in model.parameters() if p.requires_grad],
+                1e-4, weight_decay=eval(self.config['weight_decay']))
+        else:
+            optimizer = torch.optim.Adam(
+                model.parameters(), 1e-4,
+                weight_decay=eval(self.config['weight_decay']))
         
         num_train = len(train_loader.dataset.dataset)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_train, eta_min=0,
@@ -265,54 +252,51 @@ class SimCLR(object):
         for epoch_counter in range(self.config['epochs']):
             for _, batch in enumerate(train_loader):
                 batch = batch[0]
-                #if 698 not in batch['instances'].gt_classes:
-                #    continue 
-                
                 image = batch['image'].to(self.device)
-                assert (image.shape[2] == 3)
-                # the image is in BGR format
+                assert (image.shape[2] == 3)  # the image is in BGR format
                 
                 masks, boxes = self.rpn(image, is_train=True)
-                idx = [i for i in range(masks.shape[0]) if keep(i, masks)]
-                masks, boxes = masks[idx], boxes[idx]
-                #seg_triplets = prepare_seg_triplets(masks, boxes, image)
-                #obj_triplets = prepare_obj_triplets(masks, boxes, image)
- 
+                if self.config["mask_nms"]:
+                    idx = [i for i in range(masks.shape[0]) if keep(i, masks)]
+                    masks, boxes = masks[idx], boxes[idx]
+
                 loss = 0.
                 mean_loss = 0.
                 loss_count = 0
-                """                
-                seg_triplets = prepare_seg_triplets(masks, boxes, image)
-                for x_a, x_p, x_n in seg_triplets:
-                    curr_loss = self._step(model, x_a, x_p, x_n)
-                    loss += curr_loss
-                    mean_loss += curr_loss
-                    loss_count += 1
-                """
-                if self.config['loss']['type'] == 'triplet':
-                    obj_triplets = prepare_obj_triplets(masks, boxes, image)
-                    for x_a, x_p, x_n in obj_triplets:
+                if self.config["mask_loss"]:
+                    seg_triplets = prepare_seg_triplets(masks, boxes, image)
+                    for x_a, x_p, x_n in seg_triplets:
                         curr_loss = self._step(model, x_a, x_p, x_n)
-                        loss += self.config['contrastive_loss_weight'] * curr_loss
-                        mean_loss += self.config['contrastive_loss_weight'] * curr_loss
+                        loss += self.config['beta'] * curr_loss
+                        mean_loss += self.config['beta'] * curr_loss
                         loss_count += 1
-                elif self.config['loss']['type'] == 'nce' and masks.shape[0] > 1:
-                   xis, xjs = prepare_object_pairs(masks, boxes, image)
-                   loss += 5 * self._step_nce(model, xis, xjs, n_iter)
-                   mean_loss += self.config['contrastive_loss_weight']*loss
-                   loss_count += 1
+
+                if self.config["object_loss"]:
+
+                    if self.config['loss']['type'] == 'triplet':
+                        obj_triplets = prepare_obj_triplets(masks, boxes, image, augment=self.config["augment"])
+                        for x_a, x_p, x_n in obj_triplets:
+                            curr_loss = self._step(model, x_a, x_p, x_n)
+                            loss += curr_loss
+                            mean_loss += curr_loss
+                            loss_count += 1
+
+                    elif self.config['loss']['type'] == 'nce' and masks.shape[0] > 1:
+                       xis, xjs = prepare_object_pairs(masks, boxes, image)
+                       loss += self._step_nce(model, xis, xjs, n_iter)
+                       mean_loss += loss
+                       loss_count += 1
 
                 if loss_count > 0:
                     mean_loss /= loss_count
                     optimizer.zero_grad()
-                    loss.backward()
+                    mean_loss.backward()
                     optimizer.step()
 
                 if n_iter % self.config['log_loss_every_n_steps'] == 0:
                     self.writer.add_scalar('train_loss', mean_loss, global_step=n_iter)
  
                 if n_iter % self.config['log_every_n_steps'] == 0 and masks.shape[0] > 1:
-                    print(mean_loss)
                     h, w = masks[0].shape[0], masks[0].shape[1] 
                     labels = batch['labels'].cpu().numpy()
                     proposed_cls = bin_to_cls_mask(masks.cpu().numpy(), plot=True)
@@ -331,19 +315,17 @@ class SimCLR(object):
                     image_labels = torch.tensor(image_labels)
                     self.writer.add_embedding(embs, label_img=image_labels.permute(0,3,1,2), global_step=n_iter)
                     """
-                # do test using the detectron2 script. This is too slow.
-                #do_test(self.evaluator, self.rpn.cfg, self.rpn.predictor.model)
-                #torch.save(model.state_dict(), 'model.pth')
-                if (n_iter) % self.config['save_checkpoint_every_n_steps'] == 0:
+
+                if n_iter % self.config['save_checkpoint_every_n_steps'] == 0:
+                    print('Saving model..')
                     self.rpn.save(self.checkpoint_dir, n_iter)
-                if (n_iter % self.config['save_checkpoint_every_n_steps']) == 0:
-                    print('Saving simclr model..')
                     torch.save(model.state_dict(), os.path.join(self.checkpoint_dir, 'model_'+str(n_iter)+'.pth'))   
                 n_iter +=1
+
             # warmup for the first 10 epochs
             if epoch_counter >= 10:
                 scheduler.step()
-            #do_test(self.rpn.cfg, self.rpn.predictor.model)
+
             self.writer.add_scalar('cosine_lr_decay', scheduler.get_lr()[0], global_step=n_iter)
 
     def _load_pre_trained_weights(self, model):
@@ -356,13 +338,15 @@ class SimCLR(object):
 
         return model
 
-"""
-def do_test(evaluator, cfg, model):
-    from detectron2.data.build import build_detection_test_loader
-    from detectron2.evaluation import inference_on_dataset
-
-    dataset_name = cfg.DATASETS.TEST[0] 
-    data_loader = build_detection_test_loader(cfg, dataset_name)
-    results = inference_on_dataset(model, data_loader, evaluator)
-    return results
-"""
+    def _get_feature(self, model, x, b):
+        # x is already m * image
+        x = x[b[1]:b[3], b[0]:b[2],:][b[1]:b[3], b[0]:b[2],:]
+        h_, w_ = x.shape[0], x.shape[1]
+        """
+        if h_*w_ < 1024:
+            x = cv2.resize(x.cpu().numpy(), (40,40))
+            x = torch.tensor(x)
+            print('resized to', x.shape)
+        """
+        r, _ = model(x.permute(2,0,1).view(1, 3, h_, w_))
+        return r
