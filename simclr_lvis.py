@@ -261,13 +261,13 @@ class SimCLR(object):
         #segmentation_params = self.rpn.predictor.model.roi_heads.parameters()
         #optimizer = torch.optim.Adam(list(segmentation_params)+list(model.parameters()), 3e-4, weight_decay=eval(self.config['weight_decay']))
 
-        if self.config['hyperbolic']:
+        if self.config['hyperbolic'] and False: # TODO: we don't need this
             optimizer = geoopt.optim.RiemannianAdam(
                 [p for p in model.parameters() if p.requires_grad],
                 1e-4, weight_decay=eval(self.config['weight_decay']))
         else:
             optimizer = torch.optim.Adam(
-                model.parameters(), 1e-4,
+                [p for p in model.parameters() if p.requires_grad], 1e-4,
                 weight_decay=eval(self.config['weight_decay']))
         
         num_train = len(train_loader.dataset.dataset)
@@ -278,7 +278,7 @@ class SimCLR(object):
         # save config file
         _save_config_file(model_checkpoints_folder)
 
-        n_iter = loaded_iter
+        n_iter = loaded_iter+1
         for epoch_counter in range(self.config['epochs']):
             for _, batch in enumerate(train_loader):
                 batch = batch[0]
