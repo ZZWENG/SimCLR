@@ -7,21 +7,17 @@ import skimage
 import torch
 import torchvision.transforms as T
 from skimage.transform import rotate
-from torchvision.transforms import Normalize
-
-normalize = Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
 
 def prepare_seg_triplets(masks, boxes, image, side_len=224):
     n = masks.shape[0]
-    boxes = boxes.tensor.detach().cpu().numpy().astype(np.uint32)
     for i in range(n):
         m, b = masks[i], boxes[i]
         if m.sum() < 400:  continue  # skip tiny masks for now
         m = m.view(*m.shape, 1)
-        full = image[b[1]:b[3], b[0]:b[2], :] / 255.
-        foreground = (m * image)[b[1]:b[3], b[0]:b[2], :] / 255.
-        background = ((~m) * image)[b[1]:b[3], b[0]:b[2], :] / 255.
+        full = image[b[1]:b[3], b[0]:b[2], :]
+        foreground = (m * image)[b[1]:b[3], b[0]:b[2], :]
+        background = ((~m) * image)[b[1]:b[3], b[0]:b[2], :]
         full = resize_tensor(full, side_len)
         foreground = resize_tensor(foreground, side_len)
         background = resize_tensor(background, side_len)
@@ -31,7 +27,6 @@ def prepare_seg_triplets(masks, boxes, image, side_len=224):
 # returns tensor (N, L, L, 3), (N, L, L, 3) for input to model
 def prepare_object_pairs(masks, boxes, image, side_len=128):
     n = masks.shape[0]
-    boxes = boxes.tensor.detach().cpu().numpy().astype(np.int)
     result = []
     result_aug = []
     for i in range(n):
@@ -49,12 +44,12 @@ def prepare_object_pairs(masks, boxes, image, side_len=128):
             continue
         result += [cropped]
         result_aug += [cropped_aug]
-    result = torch.tensor(np.stack(result)).type(torch.float).to(masks.device) / 255.
-    result_aug = torch.tensor(np.stack(result_aug)).type(torch.float).to(masks.device) / 255.
+    result = torch.tensor(np.stack(result)).type(torch.float).to(masks.device)
+    result_aug = torch.tensor(np.stack(result_aug)).type(torch.float).to(masks.device)
     result, result_aug = result.permute(0, 3, 1, 2), result_aug.permute(0, 3, 1, 2)
 
-    result = torch.stack([normalize(result[i]) for i in range(result.shape[0])])
-    result_aug = torch.stack([normalize(result_aug[i]) for i in range(result_aug.shape[0])])
+    result = torch.stack([result[i] for i in range(result.shape[0])])
+    result_aug = torch.stack([result_aug[i] for i in range(result_aug.shape[0])])
     return result, result_aug
 
 
@@ -63,7 +58,7 @@ def prepare_obj_triplets(masks, boxes, image, augment=False, side_len=224):
     boxes = boxes.tensor.detach().cpu().numpy().astype(np.uint32)
     for i in range(n):
         m1, b = masks[i], boxes[i]
-        cut_a = (m1.view(*m1.shape, 1) * image)[b[1]:b[3], b[0]:b[2], :] / 255.
+        cut_a = (m1.view(*m1.shape, 1) * image)[b[1]:b[3], b[0]:b[2], :]
         if cut_a.shape[0] * cut_a.shape[1] < 10:
             continue
 
@@ -94,7 +89,7 @@ def prepare_obj_triplets(masks, boxes, image, augment=False, side_len=224):
 
 
 def apply_mask(image, m, b):
-    return (m.view(*m.shape, 1) * image)[b[1]:b[3], b[0]:b[2], :] / 255.
+    return (m.view(*m.shape, 1) * image)[b[1]:b[3], b[0]:b[2], :]
 
 
 def resize_tensor(t, side_len):

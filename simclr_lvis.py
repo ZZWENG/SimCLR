@@ -1,8 +1,11 @@
 import json
 
 import geoopt
+import skimage.io as io
 import torch.nn.functional as F
+from lvis import LVIS, LVISResults
 from torch.utils.tensorboard import SummaryWriter
+from torchvision.transforms import Normalize
 from torchvision.utils import make_grid
 
 from loss.nt_xent import NTXentLoss
@@ -20,7 +23,9 @@ class SimCLR(object):
         self.config = config
         self.rpn = rpn
         self.device = self._get_device()
-        self.dataset = dataset
+        # self.dataset = dataset
+        self.dataset = self._load_lvis_results()
+
         if self.config['loss']['type'] == 'nce':
            self.loss_crit = NTXentLoss(self.device, config['batch_size'], **config['loss'])
         if self.config['hyperbolic']:
@@ -40,8 +45,7 @@ class SimCLR(object):
 
     def _load_lvis_results(self):
         # for each image
-        from lvis import LVIS, LVISResults
-        from torchvision.transforms import Normalize
+
         class DummyLoader(object):
             def __init__(self, dt_path=r'output/inference'):
                 self.lvis_gt = LVIS('/scratch/users/zzweng/datasets/lvis/lvis_v0.5_val.json')
@@ -91,8 +95,6 @@ class SimCLR(object):
         r_p, z_p = model(x_p.permute(2,0,1).view(1, 3,x_p.shape[0],x_p.shape[1]))  # [N,C]
         r_n, z_n = model(x_n.permute(2,0,1).view(1, 3,x_n.shape[0],x_n.shape[1]))
 
-        #import ipdb as pdb
-        #pdb.set_trace()
         # normalize projection feature vectors
         if not self.config["hyperbolic"]:
             z_a = F.normalize(z_a, dim=0)
@@ -134,19 +136,20 @@ class SimCLR(object):
         return optimizer
 
     def train(self):
-        train_loader, valid_loader = self.dataset.get_data_loaders()
+        # train_loader, valid_loader = self.dataset.get_data_loaders()
+        train_loader = self.dataset
+
         if self.config['hyperbolic']:
             model = HResNetSimCLR(**self.config["model"]).to(self.device)
         else:
             model = ResNetSimCLR(**self.config["model"]).to(self.device)
         model, loaded_iter = self._load_pre_trained_weights(model)
         self.model = model
+        optimizer = self._get_optimizer()
 
         # print('Freezing rpn weights')
         # for p in self.rpn.predictor.model.parameters():
         #     p.requires_grad = False
-
-        optimizer = self._get_optimizer()
         
         # num_train = len(train_loader.dataset.dataset)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=60000, eta_min=0,
@@ -159,11 +162,12 @@ class SimCLR(object):
         n_iter = loaded_iter + 1
         for epoch_counter in range(self.config['epochs']):
             for _, batch in enumerate(train_loader):
-                batch = batch[0]
-                image = batch['image'].to(self.device)
+                # batch = batch[0]
+                image = batch[0].to(self.device)
                 assert (image.shape[2] == 3)  # the image is in BGR format
-                
-                masks, boxes = self.rpn(image, is_train=True)
+                masks, boxes = batch[1], batch[2]
+
+                # masks, boxes = self.rpn(image, is_train=True)
                 if self.config["mask_nms"]:
                     idx = [i for i in range(masks.shape[0]) if keep(i, masks)]
                     masks, boxes = masks[idx], boxes[idx]
