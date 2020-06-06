@@ -9,9 +9,11 @@ class HTripletLoss(nn.Module):
         super(HTripletLoss, self).__init__()
         self.ball = geoopt.PoincareBall(c=1.0)
 
-    def forward(self, a, p, n, margin=1.0):
+    def forward(self, a, p, n, margin=0.2):
         d_a_p = self.ball.dist(a, p)
         d_a_n = self.ball.dist(a, n)
+        #import ipdb as pdb
+        #pdb.set_trace()
         distance = d_a_p - d_a_n +margin
         loss = torch.mean(torch.max(distance, torch.zeros_like(distance)))
         return loss

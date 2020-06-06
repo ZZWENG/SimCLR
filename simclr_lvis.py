@@ -43,24 +43,39 @@ def bin_to_cls_mask(labels, plot=True):
     return mask.astype(np.uint8)
 
 
-def prepare_seg_triplets(masks, boxes, image):
+def prepare_seg_triplets(masks, boxes, image, side_len=224):
     n = masks.shape[0]
     boxes = boxes.tensor.detach().cpu().numpy().astype(np.uint32)
     for i in range(n):
         m, b = masks[i], boxes[i]
         if m.sum() < 400:  continue  # skip tiny masks for now
         m = m.view(*m.shape, 1)
-        full = image[b[1]:b[3], b[0]:b[2],:]
-        foreground = (m * image)[b[1]:b[3], b[0]:b[2],:]
-        background = ((~m) * image)[b[1]:b[3], b[0]:b[2],:]
+        full = image[b[1]:b[3], b[0]:b[2],:] / 255.
+        foreground = (m * image)[b[1]:b[3], b[0]:b[2],:] / 255.
+        background = ((~m) * image)[b[1]:b[3], b[0]:b[2],:] / 255.
+        full = resize_tensor(full, side_len)
+        foreground = resize_tensor(foreground, side_len)
+        background = resize_tensor(background, side_len)
         yield full, foreground, background
+
+def iou(m1, m2):
+    union = (m1 | m2).sum().item()
+    if not union > 0: return 0.
+    return (m1*m2).sum().item() * 1. / union
 
 
 def overlapping_idx(anchor, masks, thres):
     def overlaps(m1, m2, thres):
         return (m1 * m2).sum() > thres
     flags = np.array([overlaps(anchor, m, thres) for m in masks])
-    return np.where(flags == False)[0], np.where(flags == True)[0]
+    neg_idx = np.where(flags == False)[0]
+
+    def is_child(m1, m2):
+        m1_area, m2_area = m1.sum().item(), m2.sum().item()
+        return iou(m1, m2) > 0.5 and m1_area > m2_area
+    pos_flags = np.array([is_child(anchor, m) for m in masks])
+    pos_idx = np.where(pos_flags == True)[0]
+    return neg_idx, pos_idx
 
 
 def size_of(cut):
@@ -71,10 +86,10 @@ def size_of(cut):
 def keep(i, masks):
     # retuns true if masks[i] overlaps with some other masks by more than x% of itself
     for j in range(i):
-        if j == i: continue
         area = masks[i].sum().item() * 1.
-#         if area < 400: return False
-        if (masks[j] * masks[i]).sum() / area > 0.7: # and area < masks[j].sum():
+        if area < 100: return False
+        #if (masks[j] * masks[i]).sum() / area > 0.7# and area < masks[j].sum():
+        if (masks[j] * masks[i]).sum().item() / area > 0.7 and iou(masks[i], masks[j]) < 0.5:
             return False
     return True
 
@@ -101,7 +116,7 @@ def prepare_object_pairs(masks, boxes, image, side_len=128):
         result += [cropped]
         result_aug += [cropped_aug]
     result = torch.tensor(np.stack(result)).type(torch.float).to(masks.device)/255.
-    result_aug = torch.tensor(np.stack(result_aug)).type(torch.float).to(masks.device)
+    result_aug = torch.tensor(np.stack(result_aug)).type(torch.float).to(masks.device)/255.
     result, result_aug = result.permute(0,3,1,2), result_aug.permute(0,3,1,2)
 
     result = torch.stack([normalize(result[i]) for i in range(result.shape[0])])
@@ -110,47 +125,57 @@ def prepare_object_pairs(masks, boxes, image, side_len=128):
 
 
 def apply_mask(image, m, b):
-    return (m.view(*m.shape, 1) * image)[b[1]:b[3], b[0]:b[2], :]
+    return (m.view(*m.shape, 1) * image)[b[1]:b[3], b[0]:b[2], :] / 255.
 
 
-def prepare_obj_triplets(masks, boxes, image, augment=False, side_len=128):
+def prepare_obj_triplets(masks, boxes, image, augment=False, side_len=224):
     n = masks.shape[0]
-    k = 5  # number of triplets sampled for each anchor
+    #k = 10  # number of triplets sampled for each anchor
     boxes = boxes.tensor.detach().cpu().numpy().astype(np.uint32)
     for i in range(n):
         m1, b = masks[i], boxes[i]
-        cut_a = (m1.view(*m1.shape, 1) * image)[b[1]:b[3], b[0]:b[2], :]
+        cut_a = (m1.view(*m1.shape, 1) * image)[b[1]:b[3], b[0]:b[2], :]/255.
         if cut_a.shape[0] * cut_a.shape[1] < 10:
             continue
 
         neg_idx, pos_idx = overlapping_idx(m1, masks, 50)
+        
         if len(neg_idx) == 0:  continue
 
         if len(pos_idx) == 0:
             if augment:
-                raise Exception('Need to change this part.')
                 cut_p = torch.tensor(rotate(cut_a.cpu().numpy(), angle=25, mode='wrap')).type(torch.float).to(m1.device)
             else:
                 continue
         else:
-            for j in range(k):
-                i_p = np.random.choice(pos_idx, 1)[0]
+           # print(i, pos_idx, neg_idx)
+            for j in range(len(pos_idx)):
+                i_p = pos_idx[j]
+                #i_p = np.random.choice(pos_idx, 1)[0]
                 cut_p = apply_mask(image, masks[i_p], boxes[i_p])
-        
-                i_n = np.random.choice(neg_idx, 1)[0]
-                cut_n = apply_mask(image, masks[i_n], boxes[i_n])
+                
+                i_ns = np.random.choice(neg_idx, min(5, len(neg_idx)), replace=False)
+                #import pdb
+                #pdb.set_trace()
+                for i_n in i_ns:
+                    cut_n = apply_mask(image, masks[i_n], boxes[i_n])
 
-                if size_of(cut_p) < 10 or size_of(cut_n) < 10 or size_of(cut_a) < 10:
-                    continue
+                    if size_of(cut_p) < 10 or size_of(cut_n) < 10 or size_of(cut_a) < 10:
+                        continue
 
-                cut_a = cv2.resize(cut_a.cpu().numpy(), (side_len, side_len))
-                cut_p = cv2.resize(cut_p.cpu().numpy(), (side_len, side_len))
-                cut_n = cv2.resize(cut_n.cpu().numpy(), (side_len, side_len))
+                    cut_a = cv2.resize(cut_a.cpu().numpy(), (side_len, side_len))
+                    cut_p = cv2.resize(cut_p.cpu().numpy(), (side_len, side_len))
+                    cut_n = cv2.resize(cut_n.cpu().numpy(), (side_len, side_len))
 
-                cut_a = torch.tensor(cut_a).type(torch.float).to('cuda')
-                cut_p = torch.tensor(cut_p).type(torch.float).to('cuda')
-                cut_n = torch.tensor(cut_n).type(torch.float).to('cuda')
-                yield cut_a, cut_p, cut_n
+                    cut_a = torch.tensor(cut_a).type(torch.float).to('cuda')
+                    cut_p = torch.tensor(cut_p).type(torch.float).to('cuda')
+                    cut_n = torch.tensor(cut_n).type(torch.float).to('cuda')
+                    yield cut_a, cut_p, cut_n
+
+def resize_tensor(t, side_len):
+    device = t.device
+    t_resized = cv2.resize(t.cpu().numpy(), (side_len, side_len))
+    return torch.tensor(t_resized).type(torch.float).to(device)
 
 
 class SimCLR(object):
@@ -158,8 +183,6 @@ class SimCLR(object):
         self.config = config
         self.rpn = rpn
         self.device = self._get_device()
-        self.writer = SummaryWriter()
-        self._write_configs()
         self.dataset = dataset
         if self.config['loss']['type'] == 'nce':
            self.loss_crit = NTXentLoss(self.device, config['batch_size'], **config['loss'])
@@ -167,14 +190,18 @@ class SimCLR(object):
            self.triplet_loss_crit = HTripletLoss()
         else:
            self.triplet_loss_crit = TripletLoss()
-        checkpoint_dir = '/scratch/users/zzweng/runs/checkpoints/{}_hyp={}_zdim={}_loss={}'.format(
-             self.config['desc'], self.config['hyperbolic'], self.config['model']['out_dim'], self.config['loss']['type']
+        self.name = '{}_hyp={}_zdim={}_loss={}_maskloss={}'.format(
+             self.config['desc'], self.config['hyperbolic'], self.config['model']['out_dim'], 
+             self.config['loss']['type'], self.config['loss']['mask_loss']
         )
+        checkpoint_dir = '/scratch/users/zzweng/runs/checkpoints/{}'.format(self.name)
         
         os.makedirs(checkpoint_dir, exist_ok=True)
         self.checkpoint_dir = checkpoint_dir
-        self.evaluator = get_evaluator(rpn.cfg, 'coco')
-        self.evaluator.reset()
+        self.writer = SummaryWriter('runs/{}'.format(self.name))
+        self._write_configs()
+        #self.evaluator = get_evaluator(rpn.cfg, 'coco')
+        #self.evaluator.reset()
 
     def _write_configs(self):
         config_str = json.dumps(self.config)
@@ -191,10 +218,13 @@ class SimCLR(object):
         r_p, z_p = model(x_p.permute(2,0,1).view(1, 3,x_p.shape[0],x_p.shape[1]))  # [N,C]
         r_n, z_n = model(x_n.permute(2,0,1).view(1, 3,x_n.shape[0],x_n.shape[1]))
 
+        #import ipdb as pdb
+        #pdb.set_trace()
         # normalize projection feature vectors
-        z_a = F.normalize(z_a, dim=0)
-        z_p = F.normalize(z_p, dim=0)
-        z_n = F.normalize(z_n, dim=0)
+        if not self.config["hyperbolic"]:
+            z_a = F.normalize(z_a, dim=0)
+            z_p = F.normalize(z_p, dim=0)
+            z_n = F.normalize(z_n, dim=0)
         
         loss = self.triplet_loss_crit(z_a, z_p, z_n)
         return loss
@@ -223,7 +253,7 @@ class SimCLR(object):
             model = HResNetSimCLR(**self.config["model"]).to(self.device)
         else:
             model = ResNetSimCLR(**self.config["model"]).to(self.device)
-        model = self._load_pre_trained_weights(model)
+        model, loaded_iter = self._load_pre_trained_weights(model)
         print('Freezing rpn weights')
         for p in self.rpn.predictor.model.parameters():
             p.requires_grad = False
@@ -248,7 +278,7 @@ class SimCLR(object):
         # save config file
         _save_config_file(model_checkpoints_folder)
 
-        n_iter = 0
+        n_iter = loaded_iter
         for epoch_counter in range(self.config['epochs']):
             for _, batch in enumerate(train_loader):
                 batch = batch[0]
@@ -263,7 +293,7 @@ class SimCLR(object):
                 loss = 0.
                 mean_loss = 0.
                 loss_count = 0
-                if self.config["mask_loss"]:
+                if self.config["loss"]["mask_loss"]:
                     seg_triplets = prepare_seg_triplets(masks, boxes, image)
                     for x_a, x_p, x_n in seg_triplets:
                         curr_loss = self._step(model, x_a, x_p, x_n)
@@ -271,7 +301,7 @@ class SimCLR(object):
                         mean_loss += self.config['beta'] * curr_loss
                         loss_count += 1
 
-                if self.config["object_loss"]:
+                if self.config["loss"]["object_loss"]:
 
                     if self.config['loss']['type'] == 'triplet':
                         obj_triplets = prepare_obj_triplets(masks, boxes, image, augment=self.config["augment"])
@@ -286,7 +316,6 @@ class SimCLR(object):
                        loss += self._step_nce(model, xis, xjs, n_iter)
                        mean_loss += loss
                        loss_count += 1
-
                 if loss_count > 0:
                     mean_loss /= loss_count
                     optimizer.zero_grad()
@@ -295,6 +324,7 @@ class SimCLR(object):
 
                 if n_iter % self.config['log_loss_every_n_steps'] == 0:
                     self.writer.add_scalar('train_loss', mean_loss, global_step=n_iter)
+                    self.writer.add_scalar('num_triplets', loss_count, global_step=n_iter)
  
                 if n_iter % self.config['log_every_n_steps'] == 0 and masks.shape[0] > 1:
                     h, w = masks[0].shape[0], masks[0].shape[1] 
@@ -316,9 +346,9 @@ class SimCLR(object):
                     self.writer.add_embedding(embs, label_img=image_labels.permute(0,3,1,2), global_step=n_iter)
                     """
 
-                if n_iter % self.config['save_checkpoint_every_n_steps'] == 0:
+                if n_iter % self.config['save_checkpoint_every_n_steps'] == 0 and n_iter > 0:
                     print('Saving model..')
-                    self.rpn.save(self.checkpoint_dir, n_iter)
+                    #self.rpn.save(self.checkpoint_dir, n_iter)
                     torch.save(model.state_dict(), os.path.join(self.checkpoint_dir, 'model_'+str(n_iter)+'.pth'))   
                 n_iter +=1
 
@@ -330,13 +360,19 @@ class SimCLR(object):
 
     def _load_pre_trained_weights(self, model):
         try:
-            state_dict = torch.load(os.path.join(self.checkpoint_dir, 'model_60000.pth'))
+            checkpoints_files = os.listdir(self.checkpoint_dir)
+            saved_iters = [int(c.strip('.pth')[6:]) for c in checkpoints_files]
+            loaded_iter = max(saved_iters)
+            print(saved_iters)
+            #loaded_iter = int(checkpoints_files[-1].strip('.pth')[6:])
+            state_dict = torch.load(os.path.join(self.checkpoint_dir, checkpoints_files[-1]))
             model.load_state_dict(state_dict)
-            print("Loaded pre-trained model with success.")
+            print("Loaded pre-trained model at iteration {} with success.".format(loaded_iter))
         except FileNotFoundError:
+            loaded_iter = 0
             print("Pre-trained weights not found. Training from scratch.")
 
-        return model
+        return model, loaded_iter
 
     def _get_feature(self, model, x, b):
         # x is already m * image

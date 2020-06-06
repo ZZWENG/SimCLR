@@ -5,7 +5,7 @@ import torchvision.models as models
 
 class ResNetSimCLR(nn.Module):
 
-    def __init__(self, base_model, out_dim):
+    def __init__(self, base_model, out_dim, freeze_base=False):
         super(ResNetSimCLR, self).__init__()
         self.resnet_dict = {"resnet18": models.resnet18(pretrained=True),
                             "resnet50": models.resnet50(pretrained=True),
@@ -14,7 +14,9 @@ class ResNetSimCLR(nn.Module):
         base_model = self._get_basemodel(base_model)
         num_ftrs = base_model.fc.in_features
         self.features = nn.Sequential(*list(base_model.children())[:-1])
-
+        if freeze_base:
+            for p in self.features.parameters():
+                p.requires_grad = False
         # projection MLP
         self.l1 = nn.Linear(num_ftrs, num_ftrs)
         self.l2 = nn.Linear(num_ftrs, out_dim)

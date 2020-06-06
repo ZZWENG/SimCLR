@@ -20,7 +20,7 @@ class PoincareKMeans(object):
         self.inertia = None
 
         for run_it in range(self.n_init):
-            print('Num Samples: {}'.format(n_samples))
+#             print('Num Samples: {}'.format(n_samples))
             centroids = X[sample(range(n_samples),self.n_clusters),:]
             for it in range(self.max_iter):
                 distances = self._get_distances_to_clusters(X, centroids)

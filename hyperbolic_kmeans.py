@@ -253,7 +253,7 @@ class HyperbolicKMeans():
     API design is modeled on the standard scikit-learn Classifier API
     """
     
-    def __init__(self, n_clusters=6, random_state=123, max_iter=300, tol=1e-8, verbose=False):
+    def __init__(self, n_clusters=6, dim=2, random_state=123, max_iter=300, tol=1e-8, verbose=False):
         np.random.seed(random_state)
         self.n_clusters = n_clusters
         self.max_iter = max_iter
@@ -261,8 +261,9 @@ class HyperbolicKMeans():
         self.verbose =  verbose
         self.labels = None
         self.cluster_centers_ = None
+        self.dim = dim
         
-    def init_centroids(self, radius=0.3, dim=3):
+    def init_centroids(self, radius=0.3):
         # randomly sample starting points on small uniform ball
         """
         theta = np.random.uniform(0, 2*np.pi, self.n_clusters)
@@ -273,6 +274,7 @@ class HyperbolicKMeans():
         centers = np.hstack((x.reshape(-1,1), y.reshape(-1,1)))
         self.centroids = centers
         """
+        dim = self.dim
         N = self.n_clusters
         norm = np.random.normal
         normal_deviates = norm(size=(dim, N))
