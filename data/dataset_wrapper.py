@@ -1,8 +1,8 @@
 import numpy as np
+import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import SubsetRandomSampler
-import torchvision.transforms as transforms
-#from data_aug.gaussian_blur import GaussianBlur
+# from data_aug.gaussian_blur import GaussianBlur
 from torchvision import datasets
 
 np.random.seed(0)

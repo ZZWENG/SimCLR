@@ -1,6 +1,3 @@
-import os
-import shutil
-
 import cv2
 import numpy as np
 import skimage
@@ -80,7 +77,7 @@ def prepare_obj_triplets(masks, boxes, image, augment=False, side_len=224):
                     yield cut_a, cut_p, cut_n
 
             else:
-                continue # Skip this anchor
+                continue  # Skip this anchor
         else:
             for j in range(len(pos_idx)):
                 i_p = pos_idx[j]
@@ -145,19 +142,3 @@ def keep(i, masks):
         if (masks[j] * masks[i]).sum().item() / area > 0.7 and iou(masks[i], masks[j]) < 0.5:
             return False
     return True
-
-
-def save_config_file(model_checkpoints_folder):
-    if not os.path.exists(model_checkpoints_folder):
-        os.makedirs(model_checkpoints_folder)
-        shutil.copy('./config.yaml', os.path.join(model_checkpoints_folder, 'config.yaml'))
-
-
-def bin_to_cls_mask(labels, plot=True):
-    h, w = labels.shape[1:]
-    mask = np.zeros((h, w))
-    for i in reversed(range(labels.shape[0])):
-        mask[labels[i]] = i+1
-    if plot:
-        mask = mask / (labels.shape[0]+1)*255  # convert to greyscale
-    return mask.astype(np.uint8)

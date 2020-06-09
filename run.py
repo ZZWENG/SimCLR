@@ -1,6 +1,7 @@
-from simclr import SimCLR
 import yaml
-from data_aug.dataset_wrapper import DataSetWrapper
+
+from data.dataset_wrapper import DataSetWrapper
+from simclr import SimCLR
 
 
 def main():

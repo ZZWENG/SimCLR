@@ -1,11 +1,11 @@
-import cv2, os
-import torch
-import numpy as np
+import os
 from functools import partial
 
+import numpy as np
+import torch
 from detectron2.data.build import build_detection_test_loader, build_detection_train_loader
-from detectron2.structures.masks import BitMasks
 from detectron2.data.dataset_mapper import DatasetMapper
+from detectron2.structures.masks import BitMasks
 
 if 'DETECTRON2_DATASETS' not in os.environ:
     print('Need to set DETECTRON2_DATASETS...')
