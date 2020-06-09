@@ -12,6 +12,7 @@ beta: 5
 augment: False
 mask_nms: True
 desc: "test"
+mask_size: 224
 
 model:
   out_dim: 2

@@ -50,11 +50,64 @@ def prepare_object_pairs(masks, boxes, image, side_len=128):
     return result, result_aug
 
 
+def prepare_seg_triplets_batched(masks, boxes, image, side_len):
+    batch_n = masks.shape[0]
+    for b in range(batch_n):
+        yield prepare_seg_triplets(masks[b], boxes[b], image[b], side_len)
+
+
+def prepare_obj_triplets_batched(masks_batch, boxes_batch, image_batch, augment=False, side_len=224):
+    num_in_batch = masks_batch.shape[0]
+    for b in range(num_in_batch):
+        masks, boxes, image = masks_batch[b], boxes_batch[b], image_batch[b]
+        dt_n = masks.shape[0]
+        for i in range(dt_n):
+            m1, b = masks[i], boxes[i]
+            cut_a = apply_mask(image, m1, b)
+            pos_flags = np.array([is_child(m1, m) for m in masks])
+            pos_idx = np.where(pos_flags)[0]
+
+            # the negative masks in this image
+            neg_idx = np.where(np.array([not overlaps(m1, m) for m in masks]))[0]
+
+            def get_neg_masks(curr_neg_idx):
+                # get the negative masks in the current image as well as sample masks from other images in the batch
+                curr_neg_sampled = np.random.choice(curr_neg_idx, min(3, len(curr_neg_idx)), replace=False)
+                for i_n in curr_neg_sampled:
+                    yield apply_mask(image, masks[i_n], boxes[i_n])
+                for i_n in np.random.choice(set(num_in_batch)-set(i), min(2, num_in_batch-1), replace=False):
+                    for j_n in np.random.choice(curr_neg_idx, min(3, len(curr_neg_idx)), replace=False):
+                        yield apply_mask(image_batch[i_n], masks_batch[i_n][j_n], image_batch[i_n][j_n])
+
+            if len(pos_idx) == 0:
+                if augment:
+                    cut_p = torch.tensor(
+                        rotate(cut_a.cpu().numpy(), angle=25, mode='wrap')).type(torch.float).to(m1.device)
+                    cut_a = resize_tensor(cut_a, side_len)
+                    cut_p = resize_tensor(cut_p, side_len)
+                    for cut_n in get_neg_masks(neg_idx):
+                        cut_n = resize_tensor(cut_n, side_len)
+                        yield cut_a, cut_p, cut_n, False
+            else:
+                for j in range(len(pos_idx)):
+                    i_p = pos_idx[j]
+                    cut_p = apply_mask(image, masks[i_p], boxes[i_p])
+                    if np.random.rand() > 0.5:
+                        cut_p = torch.tensor(rotate(cut_p.cpu().numpy(), angle=25, mode='wrap')).type(torch.float).to(
+                            m1.device)
+                    cut_a = resize_tensor(cut_a, side_len)
+                    cut_p = resize_tensor(cut_p, side_len)
+
+                    for cut_n in get_neg_masks(neg_idx):
+                        cut_n = resize_tensor(cut_n, side_len)
+                        yield cut_a, cut_p, cut_n, True
+
+
 def prepare_obj_triplets(masks, boxes, image, augment=False, side_len=224):
     n = masks.shape[0]
     for i in range(n):
         m1, b = masks[i], boxes[i]
-        cut_a = (m1.view(*m1.shape, 1) * image)[b[1]:b[3], b[0]:b[2], :]
+        cut_a = apply_mask(image, m1, b)
         if cut_a.shape[0] * cut_a.shape[1] < 10:
             continue
 
@@ -118,15 +171,18 @@ def iou(m1, m2):
     return (m1*m2).sum().item() * 1. / union
 
 
+def overlaps(m1, m2, thres=0):
+    return (m1 * m2).sum() > thres
+
+
+def is_child(m1, m2):
+    m1_area, m2_area = m1.sum().item(), m2.sum().item()
+    return iou(m1, m2) > 0.5 and m1_area > m2_area
+
+
 def overlapping_idx(anchor, masks, thres):
-    def overlaps(m1, m2, thres):
-        return (m1 * m2).sum() > thres
     flags = np.array([overlaps(anchor, m, thres) for m in masks])
     neg_idx = np.where(flags == False)[0]
-
-    def is_child(m1, m2):
-        m1_area, m2_area = m1.sum().item(), m2.sum().item()
-        return iou(m1, m2) > 0.5 and m1_area > m2_area
     pos_flags = np.array([is_child(anchor, m) for m in masks])
     pos_idx = np.where(pos_flags == True)[0]
     return neg_idx, pos_idx

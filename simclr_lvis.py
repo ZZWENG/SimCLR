@@ -39,7 +39,7 @@ class SimCLR(object):
         print("Running on:", device)
         return device
 
-    def _step(self, x_a, x_p, x_n, type=None):
+    def _step(self, x_a, x_p, x_n, has_hierarchy=True, type=None):
         model = self.model
         # get the representations and the projections
         r_a, z_a = model(x_a.permute(2,0,1).view(1, 3, x_a.shape[0],x_a.shape[1]))  # [N,C]
@@ -55,9 +55,10 @@ class SimCLR(object):
         if type == 'mask':
             return {'mask_loss': self.triplet_loss_crit(z_a, z_p, z_n)}
 
-        res = {}
+        res = {'loss_count': 1}
         res["triplet_loss"] = self.triplet_loss_crit(z_a, z_p, z_n)
-        if self.config["loss"]["include_hierarchical"]:
+
+        if self.config["loss"]["include_hierarchical"] and has_hierarchy:
             res["hierar_loss"] = self.hierarchical_loss_crit(z_a, z_p)
         return res
 
@@ -85,6 +86,7 @@ class SimCLR(object):
     def train(self):
         train_loader = self.train_loader
         loaded_iter = self._init_model_and_optimizer()
+        mask_size, augment = self.config['mask_size'], self.config['augment']
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             self.optimizer, T_max=60000, eta_min=0, last_epoch=-1)
 
@@ -92,15 +94,13 @@ class SimCLR(object):
         for epoch_counter in range(self.config['epochs']):
             for _, batch in enumerate(train_loader):
                 image = batch['image'].to(self.device)
-                import ipdb as pdb
-                pdb.set_trace()
                 image_url = batch['image_url']
                 assert (image.shape[2] == 3)  # the image is in BGR format
                 masks, boxes = batch['masks'], batch['boxes']
 
-                if self.config["mask_nms"]:
-                    idx = [i for i in range(masks.shape[0]) if keep(i, masks)]
-                    masks, boxes = masks[idx], boxes[idx]
+                # if self.config["mask_nms"]:  # not necessary for the json version
+                #     idx = [i for i in range(masks.shape[0]) if keep(i, masks)]
+                #     masks, boxes = masks[idx], boxes[idx]
 
                 loss_dict = {
                     'mask_loss': 0.,
@@ -108,20 +108,20 @@ class SimCLR(object):
                     'hierar_loss': 0.,
                     'loss_count': 0
                 }
+                import ipdb as pdb
+                pdb.set_trace()
                 if self.config["loss"]["mask_loss"]:
-                    seg_triplets = prepare_seg_triplets(masks, boxes, image)
+                    seg_triplets = prepare_seg_triplets_batched(masks, boxes, image, mask_size)
                     for x_a, x_p, x_n in seg_triplets:
                         res = self._step(x_a, x_p, x_n, type='mask')
                         loss_dict = {k: v + res[k] for k, v in loss_dict.items()}
-                        loss_dict['loss_count'] += 1
 
                 if self.config["loss"]["object_loss"]:
                     if self.config['loss']['type'] == 'triplet':
-                        obj_triplets = prepare_obj_triplets(masks, boxes, image, augment=self.config["augment"])
-                        for x_a, x_p, x_n in obj_triplets:
-                            res = self._step(x_a, x_p, x_n)
+                        obj_triplets = prepare_obj_triplets_batched(masks, boxes, image, augment, mask_size)
+                        for x_a, x_p, x_n, is_hierar in obj_triplets:
+                            res = self._step(x_a, x_p, x_n, has_hierarchy=is_hierar)
                             loss_dict = {k: v + res[k] for k, v in loss_dict.items()}
-                            loss_dict['loss_count'] += 1
 
                     # elif self.config['loss']['type'] == 'nce' and masks.shape[0] > 1:
                     #    xis, xjs = prepare_object_pairs(masks, boxes, image)
@@ -136,10 +136,10 @@ class SimCLR(object):
                     total_loss.backward()
                     self.optimizer.step()
 
-                if n_iter % self.config['log_loss_every_n_steps'] == 0:
+                if n_iter % self.config['log_loss_every_n_steps'] == 1:
                     self.writer.log_loss(loss_dict, n_iter)
-                if n_iter % self.config['log_every_n_steps'] == 0 and masks.shape[0] > 1:
-                    self.writer.visualize(image, image_url, masks, n_iter)
+                if n_iter % self.config['log_every_n_steps'] == 1 and masks.shape[1] > 1:
+                    self.writer.visualize(image[0], image_url[0], masks[0], n_iter)
                 if n_iter % self.config['save_checkpoint_every_n_steps'] == 0 and n_iter > 0:
                     print('Saving model..')
                     torch.save(self.model.state_dict(), os.path.join(self.writer.checkpoint_dir, 'model_'+str(n_iter)+'.pth'))
