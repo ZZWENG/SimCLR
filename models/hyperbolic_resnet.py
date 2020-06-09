@@ -26,7 +26,8 @@ class HResNetSimCLR(nn.Module):
     def __init__(self, base_model, out_dim, freeze_base=False):
         super(HResNetSimCLR, self).__init__()
         self.resnet_dict = {"resnet18": models.resnet18(pretrained=True),
-                            "resnet50": models.resnet50(pretrained=True)}
+                            "resnet50": models.resnet50(pretrained=True),
+                            "resnet101": models.resnet101(pretrained=True)}
 
         resnet = self._get_basemodel(base_model)
         num_ftrs = resnet.fc.in_features
@@ -41,9 +42,17 @@ class HResNetSimCLR(nn.Module):
             nn.Linear(num_ftrs, 256),
             #nn.ReLU(),
             nn.Linear(256, out_dim),
-            #nn.ReLU(),
+            nn.Tanh(),
             self.to_poincare
         )
+        self._init_embedding_weights()    
+
+    def _init_embedding_weights(self):
+        for m in self.embedding.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.uniform_(
+                    m.weight, -1e-4, 1e-4)
+                nn.init.constant_(m.bias, 0.)
 
     def _get_basemodel(self, model_name):
         try:

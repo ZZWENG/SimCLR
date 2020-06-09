@@ -55,7 +55,6 @@ def prepare_object_pairs(masks, boxes, image, side_len=128):
 
 def prepare_obj_triplets(masks, boxes, image, augment=False, side_len=224):
     n = masks.shape[0]
-    boxes = boxes.tensor.detach().cpu().numpy().astype(np.uint32)
     for i in range(n):
         m1, b = masks[i], boxes[i]
         cut_a = (m1.view(*m1.shape, 1) * image)[b[1]:b[3], b[0]:b[2], :]
@@ -69,14 +68,28 @@ def prepare_obj_triplets(masks, boxes, image, augment=False, side_len=224):
         if len(pos_idx) == 0:
             if augment:
                 cut_p = torch.tensor(rotate(cut_a.cpu().numpy(), angle=25, mode='wrap')).type(torch.float).to(m1.device)
+                i_ns = np.random.choice(neg_idx, min(3, len(neg_idx)), replace=False)
+                for i_n in i_ns:
+                    cut_n = apply_mask(image, masks[i_n], boxes[i_n])
+
+                    if size_of(cut_p) < 10 or size_of(cut_n) < 10 or size_of(cut_a) < 10:
+                        continue
+                    cut_a = resize_tensor(cut_a, side_len)
+                    cut_p = resize_tensor(cut_p, side_len)
+                    cut_n = resize_tensor(cut_n, side_len)
+                    yield cut_a, cut_p, cut_n
+
             else:
-                continue
+                continue # Skip this anchor
         else:
             for j in range(len(pos_idx)):
                 i_p = pos_idx[j]
                 cut_p = apply_mask(image, masks[i_p], boxes[i_p])
+                if np.random.rand() > 0.5:
+                    cut_p = torch.tensor(rotate(cut_p.cpu().numpy(), angle=25, mode='wrap')).type(torch.float).to(m1.device)
+
                 # sample 5 negative masks for each (anchor, positive) pair.
-                i_ns = np.random.choice(neg_idx, min(5, len(neg_idx)), replace=False)
+                i_ns = np.random.choice(neg_idx, min(3, len(neg_idx)), replace=False)
                 for i_n in i_ns:
                     cut_n = apply_mask(image, masks[i_n], boxes[i_n])
 

@@ -9,7 +9,7 @@ from torchvision.transforms import Normalize
 from torchvision.utils import make_grid
 
 from loss.nt_xent import NTXentLoss
-from loss.triplet import TripletLoss, HTripletLoss
+from loss.triplet import TripletLoss, HTripletLoss, HierarchicalLoss
 from models.hyperbolic_resnet import HResNetSimCLR
 from models.resnet_simclr import ResNetSimCLR
 from simclr_utils import *
@@ -28,10 +28,12 @@ class SimCLR(object):
 
         if self.config['loss']['type'] == 'nce':
            self.loss_crit = NTXentLoss(self.device, config['batch_size'], **config['loss'])
+        if self.config['loss']['include_hierarchical']:
+           self.hierarchical_loss_crit = HierarchicalLoss(margin=config['loss']['margin'])
         if self.config['hyperbolic']:
-           self.triplet_loss_crit = HTripletLoss()
+           self.triplet_loss_crit = HTripletLoss(margin=config['loss']['margin'])
         else:
-           self.triplet_loss_crit = TripletLoss()
+           self.triplet_loss_crit = TripletLoss(margin=config['loss']['margin'])
         self.name = '{}_hyp={}_zdim={}_loss={}_maskloss={}'.format(
              self.config['desc'], self.config['hyperbolic'], self.config['model']['out_dim'], 
              self.config['loss']['type'], self.config['loss']['mask_loss']
@@ -45,20 +47,36 @@ class SimCLR(object):
 
     def _load_lvis_results(self):
         # for each image
-
+        device = self.device
+        config = self.config
         class DummyLoader(object):
             def __init__(self, dt_path=r'output/inference'):
                 self.lvis_gt = LVIS('/scratch/users/zzweng/datasets/lvis/lvis_v0.5_val.json')
                 self.dt_path = os.path.join(dt_path, 'lvis_instances_results.json')
                 self.dt = LVISResults(self.lvis_gt, self.dt_path)
                 self.normalize = Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                if 'human_car' in config['desc']:
+                    self.img_ids = self._get_img_ids(cat_ids=[805, 211])
+                else:
+                    self.img_ids = self._get_img_ids(cat_ids=None)
+                print('Total number of images in the training set: {}'.format(len(self.img_ids)))
+ 
+            def _get_img_ids(self, cat_ids):
+                #return self.dt.get_img_ids()
+                if cat_ids is None:
+                    return self.lvis_gt.get_img_ids()
+
+                #cat_ids = [805, 211]
+                imgs = set([a['image_id'] for  a in self.lvis_gt.load_anns(self.lvis_gt.get_ann_ids(cat_ids=cat_ids))])
+                imgs = list(imgs)
+                return imgs
 
             def __getitem__(self, i):
-                img_id = self.dt.get_img_ids()[i]
+                img_id = self.img_ids[i]
                 image_url = self.dt.load_imgs([img_id])[0]['coco_url']
                 image = io.imread(image_url)
                 if len(image.shape) == 2:
-                    return None  # skip grayscale images
+                    return self.__getitem__(0)  # skip grayscale images
                 image = image / 255.
                 image = self.normalize(torch.tensor(image).permute(2, 0, 1)).permute(1, 2, 0)
 
@@ -70,14 +88,15 @@ class SimCLR(object):
                 boxes = np.stack([
                     self.dt.load_anns(ids=[a_i])[0]['bbox']
                     for a_i in ann_ids
-                ]).astype(np.uint32)
+                ]).astype(np.int)
                 boxes[:, 2] += boxes[:, 0]
                 boxes[:, 3] += boxes[:, 1]
-
-                return image, masks, boxes
+                masks = torch.tensor(masks).to(device)
+                      
+                return image, masks, boxes, image_url
 
             def __len__(self):
-                return len(self.dt.get_img_ids())
+                return len(self.img_ids)
         return DummyLoader()
 
     def _write_configs(self):
@@ -102,6 +121,8 @@ class SimCLR(object):
             z_n = F.normalize(z_n, dim=0)
         
         loss = self.triplet_loss_crit(z_a, z_p, z_n)
+        if self.config["loss"]["include_hierarchical"]:
+            loss += self.hierarchical_loss_crit(z_a, z_p)
         return loss
 
         # xis = [N, H, W, 3]
@@ -166,7 +187,8 @@ class SimCLR(object):
                 image = batch[0].to(self.device)
                 assert (image.shape[2] == 3)  # the image is in BGR format
                 masks, boxes = batch[1], batch[2]
-
+               # import ipdb as pdb
+                #pdb.set_trace()
                 # masks, boxes = self.rpn(image, is_train=True)
                 if self.config["mask_nms"]:
                     idx = [i for i in range(masks.shape[0]) if keep(i, masks)]
@@ -189,6 +211,7 @@ class SimCLR(object):
                         obj_triplets = prepare_obj_triplets(masks, boxes, image, augment=self.config["augment"])
                         for x_a, x_p, x_n in obj_triplets:
                             curr_loss = self._step(model, x_a, x_p, x_n)
+                            
                             loss += curr_loss
                             mean_loss += curr_loss
                             loss_count += 1
@@ -211,15 +234,15 @@ class SimCLR(object):
  
                 if n_iter % self.config['log_every_n_steps'] == 0 and masks.shape[0] > 1:
                     h, w = masks[0].shape[0], masks[0].shape[1] 
-                    labels = batch['labels'].cpu().numpy()
+                    #labels = batch['labels'].cpu().numpy()
                     proposed_cls = bin_to_cls_mask(masks.cpu().numpy(), plot=True)
-                    ground_cls = bin_to_cls_mask(labels, plot=True)
+                    #ground_cls = bin_to_cls_mask(labels, plot=True)
                     img = image.type(torch.int32).cpu().numpy().transpose(2,0,1) #[::-1,:,:]
                     self.writer.add_image('input_images',img, n_iter)
-                    self.writer.add_text('filename', batch['file_name'], n_iter)
+                    self.writer.add_text('filename', batch[3], n_iter)
                     #writer.add_text('ground_truth_classes', ','.join([lvis_id_cat_map[k] for k in gt_cls]), n_iter)
                     self.writer.add_image('proposed_masks', make_grid(torch.tensor(proposed_cls.reshape(1,1,h,w))), n_iter)
-                    self.writer.add_image('ground_truth', make_grid(torch.tensor(ground_cls.reshape(1,1,h,w))), n_iter)
+                    #self.writer.add_image('ground_truth', make_grid(torch.tensor(ground_cls.reshape(1,1,h,w))), n_iter)
 
                 if n_iter % self.config['save_checkpoint_every_n_steps'] == 0 and n_iter > 0:
                     print('Saving model..')
@@ -237,9 +260,9 @@ class SimCLR(object):
         try:
             checkpoints_files = os.listdir(self.checkpoint_dir)
             saved_iters = [int(c.strip('.pth')[6:]) for c in checkpoints_files]
-            loaded_iter = max(saved_iters)
+            loaded_iter = max(saved_iters) if len(saved_iters) > 0 else 0
             print(saved_iters)
-            state_dict = torch.load(os.path.join(self.checkpoint_dir, checkpoints_files[-1]))
+            state_dict = torch.load(os.path.join(self.checkpoint_dir, 'model_{}.pth'.format(loaded_iter)))
             model.load_state_dict(state_dict)
             print("Loaded pre-trained model at iteration {} with success.".format(loaded_iter))
         except FileNotFoundError:
