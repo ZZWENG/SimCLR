@@ -1,3 +1,5 @@
+import os
+
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
@@ -71,8 +73,9 @@ class SimCLR(object):
         #         [p for p in self.model.parameters() if p.requires_grad],
         #         1e-4, weight_decay=eval(self.config['weight_decay']))
         # else:
+        lr = float(self.config['lr'])
         optimizer = torch.optim.Adam(
-            [p for p in model.parameters() if p.requires_grad], self.config['lr'],
+            [p for p in model.parameters() if p.requires_grad], lr,
             weight_decay=eval(self.config['weight_decay']))
 
         self.model = model
@@ -89,6 +92,8 @@ class SimCLR(object):
         for epoch_counter in range(self.config['epochs']):
             for _, batch in enumerate(train_loader):
                 image = batch['image'].to(self.device)
+                import ipdb as pdb
+                pdb.set_trace()
                 image_url = batch['image_url']
                 assert (image.shape[2] == 3)  # the image is in BGR format
                 masks, boxes = batch['masks'], batch['boxes']

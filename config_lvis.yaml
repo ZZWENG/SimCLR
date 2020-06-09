@@ -4,31 +4,27 @@ eval_every_n_epochs: 1
 fine_tune_from: None
 log_every_n_steps: 500
 log_loss_every_n_steps: 10
-save_checkpoint_every_n_steps: 1000
+save_checkpoint_every_n_steps: 500
 weight_decay: 10e-6
-fp16_precision: False
+lr: 1e-4
 hyperbolic: True
 beta: 5
 augment: False
 mask_nms: True
-desc: "ablation2_hyp"
+desc: "test"
 
 model:
-  out_dim: 64
-  base_model: "resnet18"
+  out_dim: 2
+  base_model: "resnet101"
   freeze_base: True
-
-dataset:
-  s: 1
-  input_shape: (224,224,3)
-  num_workers: 0
-  valid_size: 0.05
 
 loss:
   temperature: 0.5
   use_cosine_similarity: True
+  margin: 0.5
   mask_loss: False
   object_loss: True
+  include_hierarchical: True
   type: "triplet"
 
 
