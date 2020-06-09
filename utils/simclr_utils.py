@@ -51,22 +51,26 @@ def prepare_object_pairs(masks, boxes, image, side_len=128):
 
 
 def prepare_seg_triplets_batched(masks, boxes, image, side_len):
-    batch_n = masks.shape[0]
+    batch_n = len(masks)
     for b in range(batch_n):
         yield prepare_seg_triplets(masks[b], boxes[b], image[b], side_len)
 
 
 def prepare_obj_triplets_batched(masks_batch, boxes_batch, image_batch, augment=False, side_len=224):
-    num_in_batch = masks_batch.shape[0]
+    num_in_batch = len(masks_batch)
     for b in range(num_in_batch):
         masks, boxes, image = masks_batch[b], boxes_batch[b], image_batch[b]
         dt_n = masks.shape[0]
-        for i in range(dt_n):
+        anchors = set(range(dt_n))
+        while len(anchors) > 0:
+            i = anchors.pop()
             m1, b = masks[i], boxes[i]
             cut_a = apply_mask(image, m1, b)
-            pos_flags = np.array([is_child(m1, m) for m in masks])
-            pos_idx = np.where(pos_flags)[0]
-
+            pos_flags = np.array([is_child(m1, masks[i_p]) for i_p in anchors])  # sample from the remaining masks that have not been anchors.
+            pos_idx = np.where(pos_flags)[0][:2]  # TODO: hack
+            if len(pos_idx) > 0:
+                print(i, pos_idx)
+            anchors = anchors - set(pos_idx)
             # the negative masks in this image
             neg_idx = np.where(np.array([not overlaps(m1, m) for m in masks]))[0]
 
@@ -75,10 +79,11 @@ def prepare_obj_triplets_batched(masks_batch, boxes_batch, image_batch, augment=
                 curr_neg_sampled = np.random.choice(curr_neg_idx, min(3, len(curr_neg_idx)), replace=False)
                 for i_n in curr_neg_sampled:
                     yield apply_mask(image, masks[i_n], boxes[i_n])
-                for i_n in np.random.choice(set(num_in_batch)-set(i), min(2, num_in_batch-1), replace=False):
-                    for j_n in np.random.choice(curr_neg_idx, min(3, len(curr_neg_idx)), replace=False):
-                        yield apply_mask(image_batch[i_n], masks_batch[i_n][j_n], image_batch[i_n][j_n])
-
+                for i_n in np.random.choice(list(set(range(num_in_batch))-set([i])), min(2, num_in_batch-1), replace=False):
+                    for j_n in np.random.choice(list(range(masks_batch[i_n].shape[0])), min(2, len(curr_neg_idx)), replace=False):
+                        yield apply_mask(image_batch[i_n], masks_batch[i_n][j_n], boxes_batch[i_n][j_n])
+            # import pdb
+            # pdb.set_trace()
             if len(pos_idx) == 0:
                 if augment:
                     cut_p = torch.tensor(

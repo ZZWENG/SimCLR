@@ -41,8 +41,8 @@ class LVISDataFromJSON(Dataset):
             return self.__getitem__(0)  # skip grayscale images
 
         image = image / 255.
-        image = self.normalize(torch.tensor(image).permute(2, 0, 1)).permute(1, 2, 0)
-
+        # image = self.normalize(torch.tensor(image).permute(2, 0, 1)).permute(1, 2, 0)
+        image = torch.tensor(image)
         ann_ids = self.dt.get_ann_ids(img_ids=[img_id])
         masks = np.stack([
             self.dt.ann_to_mask(self.dt.load_anns(ids=[a_i])[0])
@@ -52,17 +52,31 @@ class LVISDataFromJSON(Dataset):
             self.dt.load_anns(ids=[a_i])[0]['bbox']
             for a_i in ann_ids
         ]).astype(np.int)
+        scores = np.array([
+            self.dt.load_anns(ids=[a_i])[0]['score'] for a_i in ann_ids
+        ])
         boxes[:, 2] += boxes[:, 0]
         boxes[:, 3] += boxes[:, 1]
         masks = torch.tensor(masks).to(self.device)
 
         return {
-            'image': image,  # normalized
-            'dt_counts': masks.shape[0],
+            'image': image.to(self.device),  # normalized
             'masks': masks,  # cuda tensor
             'boxes': boxes,
+            'scores': scores,
             'image_url': image_url
         }
 
     def __len__(self):
         return len(self.img_ids)
+
+
+def my_collate_fn(batch):
+    images = [item['image'] for item in batch]
+    masks = [item['masks'] for item in batch]
+    boxes = [item['boxes'] for item in batch]
+    scores = [item['scores'] for item in batch]
+    urls = [item['image_url'] for item in batch]
+    return {'image': images, 'masks': masks, 'boxes': boxes, 'scores': scores, 'image_url': urls}
+
+

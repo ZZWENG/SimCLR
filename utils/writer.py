@@ -53,6 +53,8 @@ def bin_to_cls_mask(labels, plot=True):
     mask = np.zeros((h, w))
     for i in reversed(range(labels.shape[0])):
         mask[labels[i]] = i+1
+    import pdb
+    pdb.set_trace()
     if plot:
         mask = mask / (labels.shape[0]+1)*255  # convert to greyscale
     return mask.astype(np.uint8)

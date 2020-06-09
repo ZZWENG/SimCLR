@@ -1,9 +1,10 @@
 import os
+from collections import defaultdict
 
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from data.data_lvis_from_json import LVISDataFromJSON
+from data.data_lvis_from_json import LVISDataFromJSON, my_collate_fn
 from loss.triplet import TripletLoss, HTripletLoss, HierarchicalLoss
 from models.hyperbolic_resnet import HResNetSimCLR
 from models.resnet_simclr import ResNetSimCLR
@@ -32,7 +33,7 @@ class SimCLR(object):
 
     def _load_lvis_results(self):
         dataset = LVISDataFromJSON(self.device, self.config)
-        return DataLoader(dataset=dataset, batch_size=self.config["batch_size"])
+        return DataLoader(dataset=dataset, batch_size=self.config["batch_size"], collate_fn=my_collate_fn)
 
     def _get_device(self):
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -55,7 +56,8 @@ class SimCLR(object):
         if type == 'mask':
             return {'mask_loss': self.triplet_loss_crit(z_a, z_p, z_n)}
 
-        res = {'loss_count': 1}
+        res = defaultdict(float)
+        res['loss_count'] = 1
         res["triplet_loss"] = self.triplet_loss_crit(z_a, z_p, z_n)
 
         if self.config["loss"]["include_hierarchical"] and has_hierarchy:
@@ -93,9 +95,9 @@ class SimCLR(object):
         n_iter = loaded_iter + 1
         for epoch_counter in range(self.config['epochs']):
             for _, batch in enumerate(train_loader):
-                image = batch['image'].to(self.device)
+                image = batch['image']
                 image_url = batch['image_url']
-                assert (image.shape[2] == 3)  # the image is in BGR format
+                assert (image[0].shape[2] == 3)  # the image is in BGR format
                 masks, boxes = batch['masks'], batch['boxes']
 
                 # if self.config["mask_nms"]:  # not necessary for the json version
@@ -108,8 +110,6 @@ class SimCLR(object):
                     'hierar_loss': 0.,
                     'loss_count': 0
                 }
-                import ipdb as pdb
-                pdb.set_trace()
                 if self.config["loss"]["mask_loss"]:
                     seg_triplets = prepare_seg_triplets_batched(masks, boxes, image, mask_size)
                     for x_a, x_p, x_n in seg_triplets:
@@ -121,6 +121,7 @@ class SimCLR(object):
                         obj_triplets = prepare_obj_triplets_batched(masks, boxes, image, augment, mask_size)
                         for x_a, x_p, x_n, is_hierar in obj_triplets:
                             res = self._step(x_a, x_p, x_n, has_hierarchy=is_hierar)
+                            #import ipdb as pdb; pdb.set_trace()
                             loss_dict = {k: v + res[k] for k, v in loss_dict.items()}
 
                     # elif self.config['loss']['type'] == 'nce' and masks.shape[0] > 1:
@@ -138,7 +139,7 @@ class SimCLR(object):
 
                 if n_iter % self.config['log_loss_every_n_steps'] == 1:
                     self.writer.log_loss(loss_dict, n_iter)
-                if n_iter % self.config['log_every_n_steps'] == 1 and masks.shape[1] > 1:
+                if n_iter % self.config['log_every_n_steps'] == 1 and masks[0].shape[0] > 1:
                     self.writer.visualize(image[0], image_url[0], masks[0], n_iter)
                 if n_iter % self.config['save_checkpoint_every_n_steps'] == 0 and n_iter > 0:
                     print('Saving model..')
