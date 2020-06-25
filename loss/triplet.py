@@ -15,7 +15,8 @@ class HierarchicalLoss(nn.Module):
     def forward(self, parent, child):
         d_parent = self.ball.dist0(parent)
         d_child = self.ball.dist0(child)
-        return torch.max(d_parent-d_child+self.margin)
+        distance = d_parent - d_child + self.margin
+        return torch.mean(torch.max(distance, torch.zeros_like(distance)))
 
 
 class HTripletLoss(nn.Module):

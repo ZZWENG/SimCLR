@@ -29,11 +29,10 @@ class SimCLR(object):
             self.triplet_loss_crit = HTripletLoss(margin=config['loss']['margin'])
         else:
             self.triplet_loss_crit = TripletLoss(margin=config['loss']['margin'])
-        self.writer = SimCLRWriter(config)
 
     def _load_lvis_results(self):
         dataset = LVISDataFromJSON(self.device, self.config)
-        return DataLoader(dataset=dataset, batch_size=self.config["batch_size"], collate_fn=my_collate_fn)
+        return DataLoader(dataset=dataset, shuffle=True, batch_size=self.config["batch_size"], collate_fn=my_collate_fn)
 
     def _get_device(self):
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -98,6 +97,7 @@ class SimCLR(object):
         return loaded_iter
 
     def train(self):
+        self.writer = SimCLRWriter(self.config)
         train_loader = self.train_loader
         loaded_iter = self._init_model_and_optimizer()
         mask_size, augment = self.config['mask_size'], self.config['augment']
@@ -135,9 +135,9 @@ class SimCLR(object):
                         for b, i_a, i_p, i_n, is_hierar in obj_triplets:
                             if i_a == i_p:
                                 pos_features = self.model(
-                                    mask_tensors[b][i_a].permute(2, 0, 1).view(1, 3, mask_size, mask_size))
+                                    mask_tensors[b][i_a].permute(2, 0, 1).view(1, 3, mask_size, mask_size))[1]
                             else:
-                                pos_features = features[b][i_p],
+                                pos_features = features[b][i_p]
                             res = self._step(
                                 features[b][i_a],
                                 pos_features,
@@ -150,7 +150,7 @@ class SimCLR(object):
                     #    loss += self._step_nce(xis, xjs, n_iter)
                     #    mean_loss += loss
                     #    loss_count += 1
-
+                # print(loss_dict)
                 if loss_dict['loss_count'] > 0:
                     total_loss = loss_dict['triplet_loss'] + loss_dict['hierar_loss'] + \
                                  self.config['beta'] * loss_dict['mask_loss']
@@ -187,6 +187,7 @@ class SimCLR(object):
 
     def _get_mask_features(self, mask_tensors):
         features = []
+        #import ipdb as pdb; pdb.set_trace()
         for b in range(len(mask_tensors)):
             r, z = self.model(mask_tensors[b].permute(0, 3, 1, 2))
             # normalize projection feature vectors

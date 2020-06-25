@@ -40,9 +40,9 @@ class HResNetSimCLR(nn.Module):
         self.to_poincare = ToPoincare(dim=out_dim, ball=ball)
         self.embedding = nn.Sequential(
             nn.Linear(num_ftrs, 256),
-            #nn.ReLU(),
+            nn.ReLU(),
             nn.Linear(256, out_dim),
-            nn.Tanh(),
+            #nn.ReLU(),
             self.to_poincare
         )
         self._init_embedding_weights()    

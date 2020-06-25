@@ -20,14 +20,22 @@ state = torch.load(r'/scratch/users/zzweng/runs/checkpoints/freeze_coco_pretrain
 cmodel.load_state_dict(state)
 print(cmodel)
 """
-cmodel_ = torchvision.models.resnet101(pretrained=True)
-cmodel = nn.Sequential(*list(cmodel_.children())[:-1])
+PATH = 'features_lvis_dt_hyperbolic'
+os.makedirs(PATH, exist_ok=True)
+checkpoint_dir = r'/scratch/users/zzweng/runs/checkpoints/all_hyp=True_zdim=2_loss=triplet_maskloss=False/'
+cmodel = HResNetSimCLR('resnet101', 2)
+state_dict = torch.load(os.path.join(checkpoint_dir, 'model_11500.pth')) #, map_location=device)i
+cmodel.load_state_dict(state_dict)
 cmodel.eval()
+
+#cmodel_ = torchvision.models.resnet101(pretrained=True)
+#cmodel = nn.Sequential(*list(cmodel_.children())[:-1])
+#cmodel.eval()
 
 lvis = LVIS('/scratch/users/zzweng/datasets/lvis/lvis_v0.5_val.json')
 lvis_dt = LVISResults(lvis, r'output/inference/lvis_instances_results.json')
 
-def collect_features_from_dt(start, end, folder='features_lvis_dt'):
+def collect_features_from_dt(start, end, folder=PATH):
     print('Collecting {} to {}'.format(start, end))
     img_ids = lvis_dt.get_img_ids()[start:end]
     feats = []
@@ -55,13 +63,11 @@ def collect_features_from_dt(start, end, folder='features_lvis_dt'):
     feats = np.array(feats)
     np.save(os.path.join(folder,'{}_{}.npy'.format(start, end)), feats)
     np.save(os.path.join(folder,'{}_{}_ann.npy'.format(start, end)), feats_ann)
-    print('Done')
-    
-#[2;2Rect_features_from_dt(0, 5)
+    print('Done') 
 
 
 rng = np.linspace(0, 5000, 51, dtype=int)
 args = list(zip(rng[:-1], rng[1:]))
-args = [(1300, 1400), (1400,1500)]
+#args = [(1300, 1400), (1400,1500)]
 with multiprocessing.Pool(processes=6) as pool:
     results = pool.starmap(collect_features_from_dt, args)

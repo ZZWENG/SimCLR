@@ -40,7 +40,7 @@ class SimCLRWriter(object):
         # labels = batch['labels'].cpu().numpy()
         proposed_cls = bin_to_cls_mask(masks.cpu().numpy(), plot=True)
         # ground_cls = bin_to_cls_mask(labels, plot=True)
-        img = image.type(torch.int32).cpu().numpy().transpose(2, 0, 1)  # [::-1,:,:]
+        img = (image*255).type(torch.int32).cpu().numpy().transpose(2, 0, 1)  # [::-1,:,:]
         self.writer.add_image('input_images', img, n_iter)
         self.writer.add_text('filename', image_url, n_iter)
         # writer.add_text('ground_truth_classes', ','.join([lvis_id_cat_map[k] for k in gt_cls]), n_iter)
@@ -49,12 +49,13 @@ class SimCLRWriter(object):
 
 
 def bin_to_cls_mask(labels, plot=True):
+    labels = labels.astype(bool)
     h, w = labels.shape[1:]
     mask = np.zeros((h, w))
     for i in reversed(range(labels.shape[0])):
         mask[labels[i]] = i+1
-    import pdb
-    pdb.set_trace()
+    #import pdb
+    #pdb.set_trace()
     if plot:
         mask = mask / (labels.shape[0]+1)*255  # convert to greyscale
     return mask.astype(np.uint8)

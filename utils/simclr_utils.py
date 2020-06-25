@@ -61,14 +61,14 @@ def prepare_obj_triplets_batched(masks_batch, boxes_batch, image_batch, augment=
     for b in range(num_in_batch):
         masks, boxes, image = masks_batch[b], boxes_batch[b], image_batch[b]
         dt_n = masks.shape[0]
-        anchors = np.array(range(dt_n))
+        anchors = set(range(dt_n))
         while len(anchors) > 0:
-            anchor = anchors[0]; anchors = anchors[1:]
+            anchor = anchors.pop()
             # sample from the remaining masks that have not been anchors.
-            pos_flags = np.array([is_child(masks[anchor], masks[i_p]) for i_p in anchors])
-            pos_idx = anchors[np.where(pos_flags)[0]][:2]  # TODO: hack
+            pos_flags = np.array([is_child(masks[anchor], masks[i_p]) for i_p in range(dt_n)])
+            pos_idx = np.where(pos_flags)[0]  # TODO: hack
 
-            if len(pos_idx) > 0: print(anchor, pos_idx)
+            #if len(pos_idx) > 0: print(anchor, pos_idx)
             anchors = anchors - set(pos_idx)
 
             # the negative masks in this image
@@ -87,9 +87,9 @@ def prepare_obj_triplets_batched(masks_batch, boxes_batch, image_batch, augment=
                 for neg_i in get_neg_masks(neg_idx):
                     yield b, anchor, anchor, neg_i, False
 
-            for pos_i in range(len(pos_idx)):
+            for pos_i in range(min(2, len(pos_idx))):  # only use 2 positive
                 for neg_i in get_neg_masks(neg_idx):
-                    yield b, anchor, pos_i, neg_i, True
+                    yield b, anchor, pos_idx[pos_i], neg_i, True
 
 
 def augment(mask):
@@ -172,7 +172,7 @@ def overlaps(m1, m2, thres=0):
 
 def is_child(m1, m2):
     m1_area, m2_area = m1.sum().item(), m2.sum().item()
-    return iou(m1, m2) > 0.5 and m1_area > m2_area
+    return iou(m1, m2) > 0.5 and m1_area > 1.1 * m2_area
 
 
 def overlapping_idx(anchor, masks, thres):

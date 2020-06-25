@@ -5,6 +5,7 @@ from collections import Counter
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.cluster import KMeans, MiniBatchKMeans
 from sklearn.decomposition import PCA
+from sklearn.metrics import accuracy_score
 import torchvision
 import torch.nn as nn
 
@@ -16,8 +17,11 @@ generate_features = False
 
 import json
 from collections import Counter
-    
-    
+from hyperbolic_knn import HyperbolicKNN
+
+val_feat_folder = 'features_lvis_val_hyperbolic'
+dt_feat_folder = 'features_lvis_dt_hyperbolic'
+
 class Eval_KMeans(object):
     def __init__(self):
         self.lvis = LVIS('/scratch/users/zzweng/datasets/lvis/lvis_v0.5_val.json')
@@ -52,16 +56,16 @@ class Eval_KMeans(object):
         feats = []
         y = []
         rng = np.linspace(0, 5000, 51, dtype=int)
-#         args = list(zip(rng[:-1], rng[1:]))
-        args = [(400, 500), (500, 600), (600, 700), (700, 800), 
-                (800, 900), (900, 1000), (1000, 1100), (1100, 1200)]
+        args = list(zip(rng[:-1], rng[1:]))
+#         args = [(400, 500), (500, 600), (600, 700), (700, 800), 
+#                 (800, 900), (900, 1000), (1000, 1100), (1100, 1200)]
         for rng in args:
             start, end = rng[0], rng[1]
             try:
-                feats.append(np.load(r'features_lvis_val/val_feats_{}_{}_x.npy'.format(start, end)))
-                y.extend(np.load(r'features_lvis_val/val_feats_{}_{}_y.npy'.format(start, end)))
+                feats.append(np.load(r'{}/val_feats_{}_{}_x.npy'.format(val_feat_folder, start, end)))
+                y.extend(np.load(r'{}/val_feats_{}_{}_y.npy'.format(val_feat_folder, start, end)))
             except FileNotFoundError:
-                print('File features_lvis_val/{}_{}.npy not found. Skipped.'.format(start, end))
+                print('File {}/{}_{}.npy not found. Skipped.'.format(val_feat_folder, start, end))
         feats = np.concatenate(feats)
         print(feats.shape)
         self.feats_gt = feats
@@ -76,7 +80,6 @@ class Eval_KMeans(object):
             print('After:', self.feats_gt.shape)
         
         if coco_only:
-           
             coco_cats = self.lvis_to_coco.keys() 
             idx = np.array([y in coco_cats for y in self.feats_gt_y])
             self.feats_gt = self.feats_gt[idx]
@@ -104,29 +107,28 @@ class Eval_KMeans(object):
     def fit_knn(self, k=5, weights='distance'):
         feats = self.feats_gt
         y = self.feats_gt_y
-#         print(Counter(y))
-        
-#         self.pca = PCA(n_components=256)
-#         feats = self.pca.fit_transform(feats)
-#         print('After PCA..', feats.shape)
-
-        self.neigh = KNeighborsClassifier(n_neighbors=k, weights=weights)
-        self.neigh.fit(feats, y)
-        print('KNN accuracy', self.neigh.score(feats, y))
+        if 'hyperbolic' in dt_feat_folder:
+           
+            self.neigh = HyperbolicKNN(k, feats, y)
+            pred_y = self.neigh.predict(feats[:50])
+            print('KNN accuracy', accuracy_score(y[:50], pred_y))
+        else:
+            self.neigh = KNeighborsClassifier(n_neighbors=k, weights=weights)
+            self.neigh.fit(feats, y)
+            print('KNN accuracy', self.neigh.score(feats, y))
     
     def load_dt_features(self):
         feats = []
         feats_ann = []
         rng = np.linspace(0, 5000, 51, dtype=int)
         args = list(zip(rng[:-1], rng[1:]))
-#         args = [(600,700)]
         for rng in args:
             start, end = rng[0], rng[1]
             try:
-                feats.append(np.load(r'features_lvis_dt/{}_{}.npy'.format(start, end)))
-                feats_ann.extend(np.load(r'features_lvis_dt/{}_{}_ann.npy'.format(start, end)))
+                feats.append(np.load(r'{}/{}_{}.npy'.format(dt_feat_folder, start, end)))
+                feats_ann.extend(np.load(r'{}/{}_{}_ann.npy'.format(dt_feat_folder, start, end)))
             except FileNotFoundError:
-                print('File features_lvis_dt/{}_{}.npy not found. Skipped.'.format(start, end))
+                print('File {}/{}_{}.npy not found. Skipped.'.format(dt_feat_folder, start, end))
         self.feats = np.concatenate(feats)
         self.feats_ann = feats_ann
         print(self.feats.shape)

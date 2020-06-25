@@ -14,7 +14,7 @@ from detectron2 import model_zoo
 from detectron2.config import get_cfg
 from detectron2.engine import DefaultPredictor
 
-PATH = 'features_lvis_val'
+PATH = 'features_lvis_val_hyperbolic'
 os.makedirs(PATH, exist_ok=True)
 
 class LvisSaver(object):
@@ -54,7 +54,7 @@ class LvisSaver(object):
                     patch = I_masked[b[1]:b[1]+b[3], b[0]:b[0]+b[2], :] / 255.
                     patch = cv2.resize(patch, (224, 224))
                     patch_tensor = torch.tensor(patch).float()
-                    feat = self.model(patch_tensor.view(1, *patch_tensor.shape).permute(0, 3, 1, 2)).detach().numpy().flatten()
+                    feat = self.model(patch_tensor.view(1, *patch_tensor.shape).permute(0, 3, 1, 2))[1].detach().numpy().flatten()
                     feature_x.append(feat)
                     feature_y.append(ann['category_id'])
                 except:
@@ -80,10 +80,15 @@ if __name__ == '__main__':
 #     # cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(CFG_FILE)
 #     cfg.MODEL.WEIGHTS = r'/scratch/users/zzweng/output/coco/classagnostic1/model_0021999.pth'
 #     rpn.predictor = DefaultPredictor(cfg)
-    
-    cmodel_ = torchvision.models.resnet101(pretrained=True)
-    model = nn.Sequential(*list(cmodel_.children())[:-1])
+    from models.hyperbolic_resnet import HResNetSimCLR
+    checkpoint_dir = r'/scratch/users/zzweng/runs/checkpoints/all_hyp=True_zdim=2_loss=triplet_maskloss=False/'
+    model = HResNetSimCLR('resnet101', 2)
+    state_dict = torch.load(os.path.join(checkpoint_dir, 'model_11500.pth')) #, map_location=device)
+    model.load_state_dict(state_dict)
     model.eval()
+    #cmodel_ = torchvision.models.resnet101(pretrained=True)
+    #model = nn.Sequential(*list(cmodel_.children())[:-1])
+    #model.eval()
 
     saver = LvisSaver(model, PATH)
     saver.save()

@@ -1,11 +1,15 @@
 from random import sample
 import numpy as np
-# from args import args
+import geoopt, torch
+ball = geoopt.PoincareBall()
+from collections import Counter
+
 def norm(x, axis=None):
     return np.linalg.norm(x, axis=axis)
 
+
 class PoincareKMeans(object):
-    def __init__(self, dim, n_clusters=8, n_init=20, max_iter=300, tol=1e-8, verbose=True):
+    def __init__(self, dim, n_clusters=8, n_init=5, max_iter=300, tol=1e-8, verbose=True):
         self.n_clusters = n_clusters
         self.n_init = n_init
         self.max_iter = max_iter
@@ -21,7 +25,8 @@ class PoincareKMeans(object):
 
         for run_it in range(self.n_init):
 #             print('Num Samples: {}'.format(n_samples))
-            centroids = X[sample(range(n_samples),self.n_clusters),:]
+            centroids = X[np.random.choice(range(n_samples),self.n_clusters),:]
+
             for it in range(self.max_iter):
                 distances = self._get_distances_to_clusters(X, centroids)
                 labels = np.argmin(distances, axis=1)
@@ -45,6 +50,7 @@ class PoincareKMeans(object):
             labels = np.argmin(distances, axis=1)
             inertia = np.sum([np.sum(distances[np.where(labels == i)[0], i]**2)
                               for i in range(self.n_clusters)])
+            print(it, inertia, Counter(labels))
             if (self.inertia == None) or (inertia < self.inertia):
                 self.inertia = inertia
                 self.labels_ = labels.copy()
@@ -73,11 +79,13 @@ class PoincareKMeans(object):
 
         distances = np.zeros((n_samples, n_clusters))
         for i in range(n_clusters):
-            centroid = np.tile(clusters[i, :], (n_samples, 1))
-            den1 = 1 - np.linalg.norm(X, axis=1)**2
-            den2 = 1 - np.linalg.norm(centroid, axis=1)**2
-            the_num = np.linalg.norm(X - centroid, axis=1)**2
-            distances[:, i] = np.arccosh(1 + 2 * the_num / (den1 * den2))
+#             centroid = np.tile(clusters[i, :], (n_samples, 1))
+#             den1 = 1 - np.linalg.norm(X, axis=1)**2
+#             den2 = 1 - np.linalg.norm(centroid, axis=1)**2
+#             the_num = np.linalg.norm(X - centroid, axis=1)**2
+#             distances[:, i] = np.arccosh(1 + 2 * the_num / (den1 * den2))
+            for j in range(n_samples):
+                distances[j, i] = ball.dist(torch.tensor(X[j]), torch.tensor(clusters[i,:])).item()
         return distances
 
 #     def _poinc_to_minsk(self, points):
