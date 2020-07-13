@@ -19,7 +19,6 @@ class SimCLR(object):
         self.config = config
         self.device = self._get_device()
         self.train_loader = self._load_lvis_results()
-
         if self.config['loss']['type'] == 'nce':
             from loss.nt_xent import NTXentLoss
             self.loss_crit = NTXentLoss(self.device, config['batch_size'], **config['loss'])
