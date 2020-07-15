@@ -3,12 +3,15 @@ import os
 from collections import Counter
 
 import numpy as np
+import yaml
 from lvis import LVIS, LVISEval, LVISResults
 from sklearn.metrics import accuracy_score
 from tqdm import tqdm
 
 EVAL_NAME = 'evaluate_hyperbolic'  # description of the evaluation run
 ANNOTATION_PATH = r'/scratch/users/zzweng/datasets/lvis/lvis_v0.5_val.json'
+
+# this file is generated using the inference.py file in detectron2
 PREDICTION_PATH = r'output/inference/lvis_instances_results.json'
 CACHE_PATH = r'/scratch/users/zzweng/inference'
 GT_FEATS = os.path.join(CACHE_PATH, 'gt_feats')
@@ -23,16 +26,15 @@ class LVISEvaluator(object):
     def __init__(self, run_path, model_ckpt):
         self.lvis_gt = LVIS(ANNOTATION_PATH)
         self.lvis_dt = LVISResults(self.lvis_gt, PREDICTION_PATH)
-        self._build_coco_to_lvis_map()
+        self.run_path = run_path
+        self.model_ckpt = model_ckpt
 
+        self._build_coco_to_lvis_map()
         cocoEval = LVISEval(self.lvis_gt, self.lvis_dt, 'segm')
         self.freq_groups = cocoEval._prepare_freq_group()
-        import yaml
         config_path = os.path.join(self.run_path, 'config_lvis.yaml')
         self.config = yaml.load(open(config_path, "r"), Loader=yaml.FullLoader)
 
-        self.run_path = run_path
-        self.model_ckpt = model_ckpt
 
     def _build_coco_to_lvis_map(self):
         coco_map = json.load(open(os.path.join(LVIS_API_PATH, 'data/coco_to_synset.json')))
