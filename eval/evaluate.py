@@ -20,17 +20,19 @@ os.makedirs(DT_FEATS, exist_ok=True)
 
 
 class LVISEvaluator(object):
-    def __init__(self, run_path):
+    def __init__(self, run_path, model_ckpt):
         self.lvis_gt = LVIS(ANNOTATION_PATH)
         self.lvis_dt = LVISResults(self.lvis_gt, PREDICTION_PATH)
         self._build_coco_to_lvis_map()
 
         cocoEval = LVISEval(self.lvis_gt, self.lvis_dt, 'segm')
         self.freq_groups = cocoEval._prepare_freq_group()
-        self.run_path = run_path
         import yaml
         config_path = os.path.join(self.run_path, 'config_lvis.yaml')
         self.config = yaml.load(open(config_path, "r"), Loader=yaml.FullLoader)
+
+        self.run_path = run_path
+        self.model_ckpt = model_ckpt
 
     def _build_coco_to_lvis_map(self):
         coco_map = json.load(open(os.path.join(LVIS_API_PATH, 'data/coco_to_synset.json')))
@@ -55,6 +57,7 @@ class LVISEvaluator(object):
     def _save_gt_features(self):
         # This takes a long time and shoud only be run once.
         from eval.feature_saver import LvisSaver
+        import torch
         config = self.config
         if self.config['hyperbolic']:
             from models.hyperbolic_resnet import HResNetSimCLR
@@ -62,11 +65,15 @@ class LVISEvaluator(object):
         else:
             from models.resnet_simclr import ResNetSimCLR
             model = ResNetSimCLR(config['model']['base_model'], config['model']['out_dim'])
+        state_dict = torch.load(os.path.join(self.run_path, self.model_ckpt))  # , map_location=device)i
+        model.load_state_dict(state_dict)
+        model.eval()
         saver = LvisSaver(model, self.lvis_gt, GT_FEATS)
         saver.save()
 
     def _save_dt_features(self):
         from eval.feature_saver import LvisSaver
+        import torch
         config = self.config
         if self.config['hyperbolic']:
             from models.hyperbolic_resnet import HResNetSimCLR
@@ -74,6 +81,9 @@ class LVISEvaluator(object):
         else:
             from models.resnet_simclr import ResNetSimCLR
             model = ResNetSimCLR(config['model']['base_model'], config['model']['out_dim'])
+        state_dict = torch.load(os.path.join(self.run_path, self.model_ckpt))  # , map_location=device)i
+        model.load_state_dict(state_dict)
+        model.eval()
         saver = LvisSaver(model, self.lvis_dt, GT_FEATS)
         saver.save()
 
@@ -275,7 +285,8 @@ class LVISEvaluator(object):
 
 if __name__ == '__main__':
     out_dir = r'/scratch/users/zzweng/runs/checkpoints/all_relu_hyp=True_zdim=2_loss=triplet_maskloss=False/'
-    evaluator = LVISEvaluator(out_dir)
+    model_ckpt = 'model_18500.pth'
+    evaluator = LVISEvaluator(out_dir, model_ckpt)
     evaluator.fit_knn()
     evaluator.load_gt_features()
     evaluator.load_dt_features()
